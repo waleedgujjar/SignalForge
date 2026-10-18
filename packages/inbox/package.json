@@ -1,0 +1,45 @@
+{
+  "name": "@signalforge/inbox",
+  "version": "0.0.1",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "lint": "eslint src --max-warnings 0",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@signalforge/ai": "workspace:*",
+    "@signalforge/automations": "workspace:*",
+    "@signalforge/config": "workspace:*",
+    "@signalforge/database": "workspace:*",
+    "@signalforge/deliverability": "workspace:*",
+    "@signalforge/email": "workspace:*",
+    "@signalforge/inbound": "workspace:*",
+    "@signalforge/mailboxes": "workspace:*",
+    "@signalforge/queue": "workspace:*",
+    "@signalforge/sending": "workspace:*",
+    "bullmq": "^5.53.0",
+    "isomorphic-dompurify": "^2.22.0",
+    "luxon": "^3.7.2",
+    "zod": "^3.25.28"
+  },
+  "devDependencies": {
+    "@signalforge/eslint-config": "workspace:*",
+    "@signalforge/typescript-config": "workspace:*",
+    "@types/luxon": "^3.4.2",
+    "@types/node": "^22.15.29",
+    "eslint": "^9.28.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.1"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "@signalforge/eslint-config",
+  "version": "0.0.1",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "exports": {
+    "./base": "./base.js",
+    "./next": "./next.js"
+  },
+  "dependencies": {
+    "@eslint/js": "^9.28.0",
+    "eslint-config-prettier": "^10.1.5",
+    "typescript-eslint": "^8.33.0"
+  },
+  "peerDependencies": {
+    "eslint": "^9.0.0"
+  }
+}

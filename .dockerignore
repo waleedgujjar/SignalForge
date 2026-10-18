@@ -1,0 +1,52 @@
+# Dependencies (installed inside the container)
+node_modules/
+.pnpm-store/
+
+# Build outputs (rebuilt inside the container)
+dist/
+.next/
+out/
+build/
+.turbo/
+
+# Version control
+.git/
+
+# Environment files (secrets must not leak into images)
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Testing & performance
+coverage/
+load-tests/
+test-data/
+
+# Documentation (not needed at runtime)
+docs/
+
+# IDE & editor
+.idea/
+.vscode/
+.cursor/
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Development artifacts
+cookie.txt
+test-cookies.txt
+web-cookies.txt
+signup.json
+signup2.json
+onboarding.json
+onboarding2.json
+*.tsbuildinfo

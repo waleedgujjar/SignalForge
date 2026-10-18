@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Mailbox" ALTER COLUMN "status" SET DEFAULT 'UNVERIFIED',
+ALTER COLUMN "healthStatus" SET DEFAULT 'UNKNOWN';

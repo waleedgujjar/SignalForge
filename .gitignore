@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+.next/
+out/
+build/
+.turbo/
+
+# Environment
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Testing
+coverage/
+
+# Prisma
+packages/database/prisma/*.db
+packages/database/prisma/*.db-journal
+packages/database/src/generated/
+
+# TypeScript
+*.tsbuildinfo
+
+# Misc
+.vercel
+
+# Debug/test artifacts
+cookie.txt
+test-cookies.txt
+web-cookies.txt
+onboarding.json
+onboarding2.json
+signup.json
+signup2.json
+
+# Claude Code
+.claude/

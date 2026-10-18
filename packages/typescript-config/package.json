@@ -1,0 +1,12 @@
+{
+  "name": "@signalforge/typescript-config",
+  "version": "0.0.1",
+  "private": true,
+  "license": "UNLICENSED",
+  "files": ["base.json", "node.json", "nextjs.json"],
+  "exports": {
+    "./base.json": "./base.json",
+    "./node.json": "./node.json",
+    "./nextjs.json": "./nextjs.json"
+  }
+}

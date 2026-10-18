@@ -1,0 +1,33 @@
+-- CreateEnum
+CREATE TYPE "CampaignLeadStopReason" AS ENUM (
+  'REPLIED',
+  'POSITIVE_REPLY',
+  'NEGATIVE_REPLY',
+  'UNSUBSCRIBED',
+  'BOUNCED',
+  'HARD_BOUNCED',
+  'MANUALLY_STOPPED',
+  'CAMPAIGN_CANCELLED',
+  'LEAD_PAUSED',
+  'SUPPRESSED',
+  'COMPLETED',
+  'SYSTEM_ERROR'
+);
+
+-- AlterEnum
+ALTER TYPE "WorkflowEventType" ADD VALUE 'FOLLOW_UP_SCHEDULED';
+ALTER TYPE "WorkflowEventType" ADD VALUE 'FOLLOW_UP_CANCELLED';
+ALTER TYPE "WorkflowEventType" ADD VALUE 'SEQUENCE_COMPLETED';
+ALTER TYPE "WorkflowEventType" ADD VALUE 'SEQUENCE_STOPPED';
+
+-- AlterTable
+ALTER TABLE "Campaign" ADD COLUMN "followUpsEnabled" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Campaign" ADD COLUMN "maxFollowUps" INTEGER NOT NULL DEFAULT 5;
+
+-- AlterTable
+ALTER TABLE "CampaignLead" ADD COLUMN "stopReason" "CampaignLeadStopReason";
+ALTER TABLE "CampaignLead" ADD COLUMN "stoppedAt" TIMESTAMP(3);
+
+-- AlterTable
+ALTER TABLE "SendingJob" ADD COLUMN "templateSubject" TEXT;
+ALTER TABLE "SendingJob" ADD COLUMN "templateBody" TEXT;

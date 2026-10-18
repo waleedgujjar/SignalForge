@@ -1,0 +1,47 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: production
+        type: choice
+        options:
+          - production
+
+# Required GitHub Secrets:
+#   VPS_HOST        — Hostinger VPS IP or hostname
+#   VPS_USER        — SSH user (e.g. deploy)
+#   VPS_SSH_KEY     — Private SSH key for VPS_USER
+#   DEPLOY_PATH     — Absolute path on VPS (e.g. /opt/signalforge)
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Placeholder — build and push images
+        run: |
+          echo "TODO: Build Docker images and push to registry (or transfer via SSH)"
+          echo "  docker build -f apps/api/Dockerfile -t signalforge-api ."
+          echo "  docker build -f apps/web/Dockerfile -t signalforge-web --build-arg NEXT_PUBLIC_API_URL=/api ."
+          echo "  docker build -f workers/Dockerfile -t signalforge-workers ."
+          exit 1
+
+      - name: Placeholder — deploy to VPS
+        run: |
+          echo "TODO: SSH into VPS and pull/restart containers"
+          echo "  ssh \$VPS_USER@\$VPS_HOST 'cd \$DEPLOY_PATH && docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d'"
+          exit 1
+
+      - name: Placeholder — verify deployment
+        run: |
+          echo "TODO: Health check against production URL"
+          echo "  curl --fail --retry 5 --retry-delay 10 https://yourdomain.com/health"
+          exit 1
