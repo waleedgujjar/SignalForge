@@ -1,13 +1,16 @@
-# SignalForge — VPS Deployment Steps (4 GB Lean)
+# SignalForge — VPS Deployment Steps
 
 Copy-paste commands for deploying SignalForge on your Hostinger VPS (2.25.122.205).
 Run each phase in order. Verify before proceeding to the next.
 
+**Server:** 15 GB RAM, 4 CPUs, 193 GB disk, Ubuntu 26.04, Docker 29.7.2
+**Architecture:** Caddy runs inside a Docker container (ig-viewer project) on the `ig-viewer_web` network. All web-facing apps join that network so Caddy can reverse-proxy to them.
+
 **Prerequisites:**
 - SSH access to the VPS
-- A domain/subdomain for the API (e.g., `api.yourdomain.com`)
-- DNS A record: `api.yourdomain.com` → `2.25.122.205`
+- DNS A record: `api.websiterankerrs.tech` → `2.25.122.205`
 - GitHub repo pushed: `https://github.com/waleedgujjar/SignalForge`
+- Vercel frontend deployed: `https://signal-forge-tan.vercel.app`
 
 ---
 
@@ -20,7 +23,7 @@ df -h
 ```
 
 Write down: available RAM, existing container memory usage, free disk.
-If free RAM is below 2.5 GB, stop here and consider upgrading the VPS.
+Existing sites use ~977 MB total. SignalForge default profile adds ~1,400-1,800 MB actual.
 
 ---
 
@@ -56,7 +59,7 @@ Fill in these values in `.env.production`:
 |----------|-------|
 | `NODE_ENV` | `production` |
 | `LOG_LEVEL` | `warn` |
-| `APP_URL` | `https://YOUR_VERCEL_APP.vercel.app` |
+| `APP_URL` | `https://signal-forge-tan.vercel.app` |
 | `API_URL` | `http://api:4000` |
 | `DATABASE_URL` | `postgresql://signalforge:YOUR_POSTGRES_PASSWORD@postgres:5432/signalforge?schema=public` |
 | `POSTGRES_USER` | `signalforge` |
@@ -123,7 +126,7 @@ cd /opt/signalforge
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d api nginx
 ```
 
-Verify API is running:
+Verify API is running via the loopback debug port:
 
 ```bash
 curl http://127.0.0.1:4080/health
@@ -131,52 +134,53 @@ curl http://127.0.0.1:4080/health
 
 Expected: `{"status":"ok","service":"signalforge-api","version":"1.0.0"}`
 
-Verify port is NOT publicly exposed:
+Verify nginx joined the Caddy network:
 
 ```bash
-# From your local machine (not the VPS):
-curl http://2.25.122.205:4080/health
-# Expected: Connection refused (because bound to 127.0.0.1 only)
+docker inspect signalforge-nginx --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}'
 ```
+
+Expected output includes both `signalforge-net` and `ig-viewer_web`.
 
 ---
 
-## Phase 5 — Configure Caddy
+## Phase 5 — Configure Caddy (HIGH RISK — affects all sites during reload)
 
 **Only do this after Phase 4 works.**
 
 First, verify your DNS A record is pointing to the VPS:
 
 ```bash
-dig api.yourdomain.com +short
+dig api.websiterankerrs.tech +short
 # Expected: 2.25.122.205
 ```
 
-Add SignalForge to Caddy:
+Edit the shared Caddyfile (used by ig-viewer, in-downloader, thesavefrom):
 
 ```bash
-sudo nano /etc/caddy/Caddyfile
+nano /opt/ig-viewer/Caddyfile
 ```
 
-Append this block at the end (replace `api.yourdomain.com` with your actual domain):
+Append this block at the end:
 
 ```caddyfile
-api.yourdomain.com {
-	reverse_proxy 127.0.0.1:4080
+# ---- api.websiterankerrs.tech (SignalForge API) ----
+api.websiterankerrs.tech {
+	reverse_proxy signalforge-nginx:80
 }
 ```
 
-Reload Caddy (graceful — existing sites stay up):
+Reload Caddy inside the container (graceful — existing sites stay up):
 
 ```bash
-sudo systemctl reload caddy
+docker exec ig-viewer-caddy-1 caddy reload --config /etc/caddy/Caddyfile
 ```
 
 Verify:
 
 ```bash
 # SignalForge API works over HTTPS
-curl https://api.yourdomain.com/health
+curl https://api.websiterankerrs.tech/health
 # Expected: {"status":"ok","service":"signalforge-api","version":"1.0.0"}
 
 # Existing sites still work
@@ -186,11 +190,11 @@ curl -I https://thesavefrom.com/
 # Expected: All return 200
 ```
 
-If any existing site is down, immediately remove the Caddy block and reload:
+If any existing site is down, immediately remove the SignalForge block and reload:
 
 ```bash
-sudo nano /etc/caddy/Caddyfile   # Remove the signalforge block
-sudo systemctl reload caddy
+nano /opt/ig-viewer/Caddyfile   # Remove the api.websiterankerrs.tech block
+docker exec ig-viewer-caddy-1 caddy reload --config /etc/caddy/Caddyfile
 ```
 
 ---
@@ -228,27 +232,34 @@ free -h
 
 ---
 
-## Phase 7 — Deploy Frontend on Vercel
+## Phase 7 — Configure Vercel Frontend
 
-1. Go to [vercel.com/new](https://vercel.com/new)
-2. Import `waleedgujjar/SignalForge` from GitHub
-3. Vercel auto-detects the monorepo via `vercel.json`
-4. Set environment variables in **Settings → Environment Variables**:
+The frontend should already be deployed at `https://signal-forge-tan.vercel.app`.
+
+1. Go to Vercel project **Settings → General → Root Directory** and set it to `apps/web`
+2. Set environment variables in **Settings → Environment Variables**:
 
 | Variable | Value | Scope |
 |----------|-------|-------|
-| `API_URL` | `https://api.yourdomain.com` | Server-side (Production) |
-| `APP_URL` | `https://YOUR_APP.vercel.app` | Server-side (Production) |
+| `API_URL` | `https://api.websiterankerrs.tech` | Server-side (Production) |
+| `APP_URL` | `https://signal-forge-tan.vercel.app` | Server-side (Production) |
 | `NEXT_PUBLIC_API_URL` | `/api` | All (Production) |
 
-5. Deploy
+3. Redeploy from the Vercel dashboard
 
-After deployment, update `.env.production` on the VPS to set `APP_URL` to your actual Vercel URL:
+After deployment, verify the VPS `.env.production` has the correct `APP_URL`:
 
 ```bash
 cd /opt/signalforge
+grep APP_URL .env.production
+# Should show: APP_URL=https://signal-forge-tan.vercel.app
+```
+
+If you need to update it:
+
+```bash
 nano .env.production
-# Set APP_URL=https://YOUR_APP.vercel.app
+# Set APP_URL=https://signal-forge-tan.vercel.app
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d api
 ```
 
@@ -258,15 +269,15 @@ docker compose -f docker-compose.prod.yml --env-file .env.production up -d api
 
 ```bash
 # API health
-curl -f https://api.yourdomain.com/health
+curl -f https://api.websiterankerrs.tech/health
 
 # Frontend loads
-curl -f -I https://YOUR_APP.vercel.app
+curl -f -I https://signal-forge-tan.vercel.app
 
 # Sign up test
-curl -s -X POST https://api.yourdomain.com/auth/signup \
+curl -s -X POST https://api.websiterankerrs.tech/auth/signup \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@yourdomain.com","password":"YourStrongPass123!","firstName":"Admin","lastName":"User"}'
+  -d '{"email":"admin@signalforge.local","password":"YourStrongPass123!","firstName":"Admin","lastName":"User"}'
 
 # Container health
 docker compose -f docker-compose.prod.yml ps
@@ -306,13 +317,13 @@ chmod +x /opt/signalforge/backups/backup.sh
 If anything goes wrong at any phase:
 
 ```bash
-# Stop all SignalForge containers (data preserved)
+# Stop all SignalForge containers (data preserved in volumes)
 cd /opt/signalforge
 docker compose -f docker-compose.prod.yml down
 
 # Remove Caddy block if added
-sudo nano /etc/caddy/Caddyfile   # Remove api.yourdomain.com block
-sudo systemctl reload caddy
+nano /opt/ig-viewer/Caddyfile   # Remove the api.websiterankerrs.tech block
+docker exec ig-viewer-caddy-1 caddy reload --config /etc/caddy/Caddyfile
 
 # Verify existing sites
 curl -I https://view-igstory.com/
@@ -322,9 +333,9 @@ curl -I https://thesavefrom.com/
 
 ---
 
-## Enabling Deferred Workers Later
+## Enabling Deferred Workers
 
-When you're ready for more features or upgrade to 8 GB RAM:
+With 15 GB RAM, you can enable all deferred workers immediately if desired:
 
 ```bash
 # Start all deferred workers (adds ~896 MB limit / ~400-500 MB actual)
@@ -358,7 +369,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.production --profile s
 
 ---
 
-## Service Summary (Lean Deployment)
+## Service Summary
 
 | Service | Status | Memory Limit |
 |---------|--------|----------:|

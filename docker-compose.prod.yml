@@ -15,7 +15,9 @@
 #   Each worker: 128MB
 #
 # Frontend is deployed to Vercel; this compose file runs API + workers only.
-# Caddy on the host handles TLS and proxies to nginx at 127.0.0.1:4080.
+# The shared Caddy container (ig-viewer_web network) handles TLS and proxies
+# to signalforge-nginx on port 80. The 127.0.0.1:4080 binding is kept for
+# local health checks on the VPS but is NOT how Caddy reaches nginx.
 
 services:
   # ── Data Services ────────────────────────────────────────────────────────────
@@ -94,6 +96,7 @@ services:
       - api
     networks:
       - signalforge-net
+      - caddy
     deploy:
       resources:
         limits:
@@ -390,3 +393,6 @@ volumes:
 networks:
   signalforge-net:
     driver: bridge
+  caddy:
+    external: true
+    name: ig-viewer_web

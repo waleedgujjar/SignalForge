@@ -1,10 +1,12 @@
-# SignalForge API — Caddy reverse proxy snippet
-# Append this block to your VPS Caddyfile (e.g. /etc/caddy/Caddyfile)
-# Replace YOUR_API_DOMAIN with your chosen subdomain.
+# SignalForge API — Caddy site block
+# Append this block to the VPS Caddyfile at /opt/ig-viewer/Caddyfile
+# Caddy runs inside the ig-viewer Docker Compose project and shares the
+# ig-viewer_web network with signalforge-nginx.
 # Caddy provisions TLS automatically via Let's Encrypt.
 #
-# After adding, reload: sudo systemctl reload caddy
+# After adding, reload inside the container:
+#   docker exec ig-viewer-caddy-1 caddy reload --config /etc/caddy/Caddyfile
 
 api.websiterankerrs.tech {
-	reverse_proxy 127.0.0.1:4080
+	reverse_proxy signalforge-nginx:80
 }
