@@ -1,0 +1,10 @@
+# SignalForge API — Caddy reverse proxy snippet
+# Append this block to your VPS Caddyfile (e.g. /etc/caddy/Caddyfile)
+# Replace YOUR_API_DOMAIN with your chosen subdomain.
+# Caddy provisions TLS automatically via Let's Encrypt.
+#
+# After adding, reload: sudo systemctl reload caddy
+
+api.websiterankerrs.tech {
+	reverse_proxy 127.0.0.1:4080
+}
