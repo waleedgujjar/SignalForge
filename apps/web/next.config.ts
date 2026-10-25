@@ -8,7 +8,6 @@ const withBundleAnalyzer = bundleAnalyzer({
 });
 
 const nextConfig: NextConfig = {
-  output: 'standalone',
   transpilePackages: [],
   reactStrictMode: true,
   async rewrites() {
