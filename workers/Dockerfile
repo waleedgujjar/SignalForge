@@ -60,7 +60,8 @@ COPY . .
 ENV DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder"
 
 RUN pnpm db:generate
-RUN pnpm --filter "./workers/**..." build
+RUN pnpm --filter "@signalforge/*" build
+RUN pnpm --filter "./workers/**" build
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
