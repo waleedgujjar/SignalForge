@@ -122,6 +122,36 @@ COPY --from=build /app/packages/lead-research/package.json ./packages/lead-resea
 COPY --from=build /app/packages/website-scanner/dist ./packages/website-scanner/dist
 COPY --from=build /app/packages/website-scanner/package.json ./packages/website-scanner/
 
+# Prisma config for migrations
+COPY --from=build /app/packages/database/prisma.config.ts ./packages/database/
+
+# Recreate pnpm workspace symlinks (node_modules/@signalforge/* -> packages/*)
+RUN mkdir -p node_modules/@signalforge && \
+    ln -s ../../packages/ai node_modules/@signalforge/ai && \
+    ln -s ../../packages/allocation node_modules/@signalforge/allocation && \
+    ln -s ../../packages/analytics node_modules/@signalforge/analytics && \
+    ln -s ../../packages/auth node_modules/@signalforge/auth && \
+    ln -s ../../packages/automations node_modules/@signalforge/automations && \
+    ln -s ../../packages/campaigns node_modules/@signalforge/campaigns && \
+    ln -s ../../packages/config node_modules/@signalforge/config && \
+    ln -s ../../packages/database node_modules/@signalforge/database && \
+    ln -s ../../packages/deliverability node_modules/@signalforge/deliverability && \
+    ln -s ../../packages/email node_modules/@signalforge/email && \
+    ln -s ../../packages/inbound node_modules/@signalforge/inbound && \
+    ln -s ../../packages/inbox node_modules/@signalforge/inbox && \
+    ln -s ../../packages/integrations node_modules/@signalforge/integrations && \
+    ln -s ../../packages/lead-discovery node_modules/@signalforge/lead-discovery && \
+    ln -s ../../packages/lead-research node_modules/@signalforge/lead-research && \
+    ln -s ../../packages/mailboxes node_modules/@signalforge/mailboxes && \
+    ln -s ../../packages/queue node_modules/@signalforge/queue && \
+    ln -s ../../packages/sending node_modules/@signalforge/sending && \
+    ln -s ../../packages/shared node_modules/@signalforge/shared && \
+    ln -s ../../packages/validation node_modules/@signalforge/validation && \
+    ln -s ../../packages/verification node_modules/@signalforge/verification && \
+    ln -s ../../packages/warmup node_modules/@signalforge/warmup && \
+    ln -s ../../packages/website-scanner node_modules/@signalforge/website-scanner && \
+    ln -s ../../apps/api node_modules/@signalforge/api
+
 USER node
 EXPOSE 4000
 
