@@ -158,41 +158,42 @@ COPY --from=build /app/workers/workflow-worker/package.json ./workers/workflow-w
 COPY --from=build /app/packages/database/prisma.config.ts ./packages/database/
 
 # Recreate pnpm dependency symlinks so Node.js ESM resolver finds all packages.
-RUN for pkg in node_modules/.pnpm/node_modules/*; do \
+RUN set -e; \
+    for pkg in node_modules/.pnpm/node_modules/*; do \
       name=$(basename "$pkg"); \
-      [ ! -e "node_modules/$name" ] && ln -s ".pnpm/node_modules/$name" "node_modules/$name"; \
-    done && \
+      [ -e "node_modules/$name" ] || ln -s ".pnpm/node_modules/$name" "node_modules/$name"; \
+    done; \
     for scope in node_modules/.pnpm/node_modules/@*; do \
       sname=$(basename "$scope"); \
       mkdir -p "node_modules/$sname"; \
       for pkg in "$scope"/*; do \
         pname=$(basename "$pkg"); \
-        [ ! -e "node_modules/$sname/$pname" ] && ln -s "../.pnpm/node_modules/$sname/$pname" "node_modules/$sname/$pname"; \
+        [ -e "node_modules/$sname/$pname" ] || ln -s "../.pnpm/node_modules/$sname/$pname" "node_modules/$sname/$pname"; \
       done; \
-    done && \
-    mkdir -p node_modules/@signalforge && \
-    ln -sf ../../packages/ai node_modules/@signalforge/ai && \
-    ln -sf ../../packages/allocation node_modules/@signalforge/allocation && \
-    ln -sf ../../packages/analytics node_modules/@signalforge/analytics && \
-    ln -sf ../../packages/auth node_modules/@signalforge/auth && \
-    ln -sf ../../packages/automations node_modules/@signalforge/automations && \
-    ln -sf ../../packages/campaigns node_modules/@signalforge/campaigns && \
-    ln -sf ../../packages/config node_modules/@signalforge/config && \
-    ln -sf ../../packages/database node_modules/@signalforge/database && \
-    ln -sf ../../packages/deliverability node_modules/@signalforge/deliverability && \
-    ln -sf ../../packages/email node_modules/@signalforge/email && \
-    ln -sf ../../packages/inbound node_modules/@signalforge/inbound && \
-    ln -sf ../../packages/inbox node_modules/@signalforge/inbox && \
-    ln -sf ../../packages/integrations node_modules/@signalforge/integrations && \
-    ln -sf ../../packages/lead-discovery node_modules/@signalforge/lead-discovery && \
-    ln -sf ../../packages/lead-research node_modules/@signalforge/lead-research && \
-    ln -sf ../../packages/mailboxes node_modules/@signalforge/mailboxes && \
-    ln -sf ../../packages/queue node_modules/@signalforge/queue && \
-    ln -sf ../../packages/sending node_modules/@signalforge/sending && \
-    ln -sf ../../packages/shared node_modules/@signalforge/shared && \
-    ln -sf ../../packages/validation node_modules/@signalforge/validation && \
-    ln -sf ../../packages/verification node_modules/@signalforge/verification && \
-    ln -sf ../../packages/warmup node_modules/@signalforge/warmup && \
+    done; \
+    mkdir -p node_modules/@signalforge; \
+    ln -sf ../../packages/ai node_modules/@signalforge/ai; \
+    ln -sf ../../packages/allocation node_modules/@signalforge/allocation; \
+    ln -sf ../../packages/analytics node_modules/@signalforge/analytics; \
+    ln -sf ../../packages/auth node_modules/@signalforge/auth; \
+    ln -sf ../../packages/automations node_modules/@signalforge/automations; \
+    ln -sf ../../packages/campaigns node_modules/@signalforge/campaigns; \
+    ln -sf ../../packages/config node_modules/@signalforge/config; \
+    ln -sf ../../packages/database node_modules/@signalforge/database; \
+    ln -sf ../../packages/deliverability node_modules/@signalforge/deliverability; \
+    ln -sf ../../packages/email node_modules/@signalforge/email; \
+    ln -sf ../../packages/inbound node_modules/@signalforge/inbound; \
+    ln -sf ../../packages/inbox node_modules/@signalforge/inbox; \
+    ln -sf ../../packages/integrations node_modules/@signalforge/integrations; \
+    ln -sf ../../packages/lead-discovery node_modules/@signalforge/lead-discovery; \
+    ln -sf ../../packages/lead-research node_modules/@signalforge/lead-research; \
+    ln -sf ../../packages/mailboxes node_modules/@signalforge/mailboxes; \
+    ln -sf ../../packages/queue node_modules/@signalforge/queue; \
+    ln -sf ../../packages/sending node_modules/@signalforge/sending; \
+    ln -sf ../../packages/shared node_modules/@signalforge/shared; \
+    ln -sf ../../packages/validation node_modules/@signalforge/validation; \
+    ln -sf ../../packages/verification node_modules/@signalforge/verification; \
+    ln -sf ../../packages/warmup node_modules/@signalforge/warmup; \
     ln -sf ../../packages/website-scanner node_modules/@signalforge/website-scanner
 
 USER node
