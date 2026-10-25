@@ -68,6 +68,7 @@ FROM node:22-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV NODE_PATH=/app/node_modules/.pnpm/node_modules
 
 # Copy dependencies and all built packages + workers
 COPY --from=build /app/node_modules ./node_modules
