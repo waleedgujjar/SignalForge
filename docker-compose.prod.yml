@@ -140,7 +140,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: 256M
 
   campaign-enrollment-worker:
     image: signalforge-workers:latest
