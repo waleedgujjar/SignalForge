@@ -14,7 +14,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
       credentials: 'include',
       signal: controller.signal,
       headers: {
-        'Content-Type': 'application/json',
+        ...(options.body != null ? { 'Content-Type': 'application/json' } : {}),
         ...options.headers,
       },
     });
