@@ -389,7 +389,7 @@ async function processImportInBackground(importId: string, workspaceId: string) 
       }
 
       fileImported = summary.created;
-      fileSkipped = summary.skipped + processResult.skipped;
+      fileSkipped = summary.skipped + processResult.skipped + processResult.noEmail + processResult.invalidEmail;
       fileErrors = summary.errors + processResult.errorCount;
       totalDuplicates += summary.updated + summary.skipped;
 

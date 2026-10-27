@@ -426,7 +426,10 @@ export default function ImportPage() {
                   <StatTile label="Websites Detected" value={result.summary.websiteDetected} />
                 )}
                 {result.summary.noEmail > 0 && (
-                  <StatTile label="No Email" value={result.summary.noEmail} color="gray" />
+                  <StatTile label="Skipped — No Email" value={result.summary.noEmail} color="gray" />
+                )}
+                {result.summary.invalidEmail > 0 && (
+                  <StatTile label="Skipped — Invalid Email" value={result.summary.invalidEmail} color="gray" />
                 )}
                 {result.summary.qualificationQueued > 0 && (
                   <StatTile label="Enrichment Queued" value={result.summary.qualificationQueued} color="purple" />

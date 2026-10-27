@@ -49,10 +49,12 @@ export function EmailPreviewPanel({
   });
 
   React.useEffect(() => {
+    // Note: previewMutation is intentionally excluded — it is recreated every
+    // render, so depending on it would re-run this effect in an infinite loop.
     if (leadId && subjectTemplate && bodyTemplate) {
       previewMutation.mutate(seed);
     }
-  }, [leadId, subjectTemplate, bodyTemplate, seed, previewMutation]);
+  }, [leadId, subjectTemplate, bodyTemplate, seed]);
 
   return (
     <Card>
@@ -96,11 +98,7 @@ export function EmailPreviewPanel({
           variant="outline"
           size="sm"
           disabled={!leadId || previewMutation.isPending}
-          onClick={() => {
-            const nextSeed = seed + 1;
-            setSeed(nextSeed);
-            previewMutation.mutate(nextSeed);
-          }}
+          onClick={() => setSeed((s) => s + 1)}
         >
           <RefreshCw className="mr-2 h-4 w-4" />
           Generate another variation

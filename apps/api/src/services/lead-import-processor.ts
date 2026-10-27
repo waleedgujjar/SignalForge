@@ -6,7 +6,6 @@ import {
   normalizeStateName,
   normalizeCountryCode,
   hasImportableRowData,
-  generatePlaceholderEmail,
   isPlaceholderEmail,
   resolveLeadName,
   getLeadDisplayName,
@@ -57,7 +56,10 @@ export interface ProcessRowsResult {
   skipped: number;
   errors: Array<{ row: number; message: string }>;
   errorCount: number;
+  /** Rows skipped because they had no email value at all. */
   noEmail: number;
+  /** Rows skipped because the email value was present but not a valid address. */
+  invalidEmail: number;
   nameFromOwner: number;
   nameFromCompany: number;
 }
@@ -85,6 +87,7 @@ export function processImportRows(
   let errorCount = 0;
   let skipped = 0;
   let noEmail = 0;
+  let invalidEmail = 0;
   let nameFromOwner = 0;
   let nameFromCompany = 0;
 
@@ -152,11 +155,21 @@ export function processImportRows(
         continue;
       }
 
-      const hadEmail = Boolean(normalized.normalizedEmail);
+      // A valid, non-empty email is mandatory. Never fabricate a placeholder or
+      // persist a partial lead (company/phone/name only) for an emailless row.
       if (!normalized.normalizedEmail) {
-        normalized.normalizedEmail = generatePlaceholderEmail();
-        noEmail++;
+        const rawEmail = (raw.email ?? '').trim();
+        if (rawEmail) {
+          invalidEmail++;
+          if (errors.length < MAX_REPORTED_ERRORS) {
+            errors.push({ row: i + 1, message: `Skipped: invalid email address "${rawEmail}"` });
+          }
+        } else {
+          noEmail++;
+        }
+        continue;
       }
+      const hadEmail = true;
 
       if (nameSource === 'owner') nameFromOwner++;
       else if (nameSource === 'company') nameFromCompany++;
@@ -182,7 +195,7 @@ export function processImportRows(
     }
   }
 
-  return { processedRows, skipped, errors, errorCount, noEmail, nameFromOwner, nameFromCompany };
+  return { processedRows, skipped, errors, errorCount, noEmail, invalidEmail, nameFromOwner, nameFromCompany };
 }
 
 export function computeFieldStats(processedRows: ProcessedImportRow[], totalRows: number): ImportFieldStats {

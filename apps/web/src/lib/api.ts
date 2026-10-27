@@ -861,6 +861,7 @@ export interface SmartImportSummary {
   skipped: number;
   errors: number;
   noEmail: number;
+  invalidEmail: number;
   qualificationQueued: number;
   nameFromOwner: number;
   nameFromCompany: number;

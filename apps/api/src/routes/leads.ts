@@ -322,6 +322,8 @@ export const leadRoutes: FastifyPluginAsync = async (app) => {
     const results = {
       created: summary.created,
       skipped: summary.skipped + processResult.skipped,
+      noEmail: processResult.noEmail,
+      invalidEmail: processResult.invalidEmail,
       errors: processResult.errors.map((e) => `Row ${e.row}: ${e.message}`),
       researchSuggested: 0,
     };
