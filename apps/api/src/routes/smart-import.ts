@@ -6,6 +6,7 @@ import {
   resolveImportMimeType,
   detectLeadImportMappings,
   buildLeadImportMappingsRecord,
+  FileParseError,
 } from '@signalforge/integrations';
 import {
   QUEUE_NAMES,
@@ -78,7 +79,16 @@ export const smartImportRoutes: FastifyPluginAsync = async (app) => {
     const optionsRaw = (data.fields as Record<string, { value?: string }>)?.options?.value;
     const options: ImportOptions = parseImportOptions(optionsRaw ? JSON.parse(optionsRaw) : {});
 
-    const { parsed } = await parseUploadedFile(data);
+    let parseResult: Awaited<ReturnType<typeof parseUploadedFile>>;
+    try {
+      parseResult = await parseUploadedFile(data);
+    } catch (err) {
+      if (err instanceof FileParseError) {
+        return reply.status(400).send({ error: err.message });
+      }
+      throw err;
+    }
+    const { parsed } = parseResult;
 
     if (!parsed.rows.length && parsed.totalRowCount === 0) {
       return reply.status(400).send({ error: 'File contains no data rows' });
@@ -122,7 +132,16 @@ export const smartImportRoutes: FastifyPluginAsync = async (app) => {
     const mergeStrategy = options.mergeStrategy ?? 'fill_missing';
 
     const startTime = new Date();
-    const { parsed, filename, mimeType, fileBuffer } = await parseUploadedFile(data);
+    let parseResult: Awaited<ReturnType<typeof parseUploadedFile>>;
+    try {
+      parseResult = await parseUploadedFile(data);
+    } catch (err) {
+      if (err instanceof FileParseError) {
+        return reply.status(400).send({ error: err.message });
+      }
+      throw err;
+    }
+    const { parsed, filename, mimeType, fileBuffer } = parseResult;
 
     if (!parsed.rows.length) {
       return reply.status(400).send({ error: 'File contains no data rows' });
