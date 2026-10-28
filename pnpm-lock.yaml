@@ -781,6 +781,9 @@ importers:
       '@signalforge/ai':
         specifier: workspace:*
         version: link:../ai
+      '@signalforge/automations':
+        specifier: workspace:*
+        version: link:../automations
       '@signalforge/campaigns':
         specifier: workspace:*
         version: link:../campaigns
@@ -1345,6 +1348,49 @@ importers:
       '@signalforge/lead-research':
         specifier: workspace:*
         version: link:../../packages/lead-research
+      '@signalforge/queue':
+        specifier: workspace:*
+        version: link:../../packages/queue
+      dotenv:
+        specifier: ^16.5.0
+        version: 16.6.1
+    devDependencies:
+      '@signalforge/eslint-config':
+        specifier: workspace:*
+        version: link:../../packages/eslint-config
+      '@signalforge/typescript-config':
+        specifier: workspace:*
+        version: link:../../packages/typescript-config
+      '@types/node':
+        specifier: ^22.15.29
+        version: 22.20.1
+      eslint:
+        specifier: ^9.28.0
+        version: 9.39.5(jiti@2.7.0)
+      tsx:
+        specifier: ^4.19.4
+        version: 4.23.12
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.1
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(jsdom@28.1.0)(lightningcss@1.32.0)(tsx@4.23.12)
+
+  workers/import-worker:
+    dependencies:
+      '@signalforge/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@signalforge/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@signalforge/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
+      '@signalforge/lead-discovery':
+        specifier: workspace:*
+        version: link:../../packages/lead-discovery
       '@signalforge/queue':
         specifier: workspace:*
         version: link:../../packages/queue

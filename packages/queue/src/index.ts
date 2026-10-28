@@ -94,3 +94,8 @@ export {
   BULK_ENROLLMENT_THRESHOLD,
   type CampaignEnrollmentQueuePayload,
 } from './campaign-enrollment.js';
+export {
+  enqueueLeadImport,
+  LEAD_IMPORT_JOB_OPTIONS,
+  type LeadImportQueuePayload,
+} from './lead-import.js';

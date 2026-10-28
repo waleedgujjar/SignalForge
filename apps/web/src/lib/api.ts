@@ -899,13 +899,16 @@ export interface SmartImportPreviewRow {
 }
 
 export interface SmartImportPreviewResult {
+  importId: string;
   headers: string[];
-  totalRowCount: number;
+  sampleSize: number;
   detectedMappings: SmartImportMapping[];
   unmappedColumns: string[];
   fieldStats: SmartImportFieldStats;
   previewRows: SmartImportPreviewRow[];
   skipped: number;
+  noEmail: number;
+  invalidEmail: number;
   errors: SmartImportError[];
 }
 
@@ -926,6 +929,7 @@ async function uploadSmartImportFile(
   endpoint: string,
   file: File,
   options?: { mergeStrategy?: 'skip' | 'fill_missing'; mappings?: Record<string, string> },
+  timeoutMs = 120_000,
 ): Promise<Response> {
   const formData = new FormData();
   formData.append('file', file);
@@ -934,7 +938,7 @@ async function uploadSmartImportFile(
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     return await fetch(`${API_URL}/leads/${endpoint}`, {
@@ -945,7 +949,7 @@ async function uploadSmartImportFile(
     });
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Import timed out. The file may be too large.');
+      throw new Error('Upload timed out. The file may be very large or the connection slow.');
     }
     throw new Error('Unable to reach the server. Please check your connection and try again.');
   } finally {
@@ -953,11 +957,9 @@ async function uploadSmartImportFile(
   }
 }
 
-export async function previewSmartImport(
-  file: File,
-  mappings?: Record<string, string>,
-): Promise<SmartImportPreviewResult> {
-  const response = await uploadSmartImportFile('smart-import/preview', file, { mappings });
+/** Uploads the full file (streamed to disk server-side) and returns a sample preview. */
+export async function previewSmartImport(file: File): Promise<SmartImportPreviewResult> {
+  const response = await uploadSmartImportFile('smart-import/preview', file, undefined, 600_000);
   if (!response.ok) {
     const err = await response.json().catch(() => ({ error: `Request failed (${response.status})` }));
     throw new Error(err.error ?? `HTTP ${response.status}`);
@@ -965,6 +967,22 @@ export async function previewSmartImport(
   return response.json();
 }
 
+/** Starts the background import for an already-uploaded file (from preview). */
+export async function startSmartImport(
+  importId: string,
+  options: { mappings?: Record<string, string>; mergeStrategy?: 'skip' | 'fill_missing' },
+): Promise<{ importId: string }> {
+  return apiFetch(`/leads/smart-import/${importId}/start`, {
+    method: 'POST',
+    body: JSON.stringify(options),
+  });
+}
+
+export async function fetchSmartImportProgress(importId: string): Promise<ImportProgress> {
+  return apiFetch(`/leads/smart-import/imports/${importId}/progress`);
+}
+
+/** Synchronous import used by small campaign-lead uploads. */
 export async function smartImportLeads(
   file: File,
   options?: { mergeStrategy?: 'skip' | 'fill_missing'; mappings?: Record<string, string> },

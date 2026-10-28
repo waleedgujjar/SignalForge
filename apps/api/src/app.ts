@@ -72,7 +72,8 @@ export async function buildApp() {
   });
 
   await app.register(multipart, {
-    limits: { fileSize: 10 * 1024 * 1024 },
+    // Large lead imports are streamed to disk, not buffered in memory.
+    limits: { fileSize: 200 * 1024 * 1024 },
   });
 
   app.addHook('onSend', (_request, reply, payload, done) => {

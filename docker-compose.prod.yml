@@ -71,6 +71,10 @@ services:
     container_name: signalforge-api
     restart: unless-stopped
     env_file: [.env.production]
+    environment:
+      IMPORT_DATA_DIR: /data/imports
+    volumes:
+      - import_data:/data/imports
     depends_on:
       postgres:
         condition: service_healthy
@@ -123,6 +127,28 @@ services:
       resources:
         limits:
           memory: 128M
+
+  import-worker:
+    image: signalforge-workers:latest
+    container_name: signalforge-import-worker
+    restart: unless-stopped
+    command: ['node', 'workers/import-worker/dist/index.js']
+    env_file: [.env.production]
+    environment:
+      IMPORT_DATA_DIR: /data/imports
+    volumes:
+      - import_data:/data/imports
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - signalforge-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
   scheduler-worker:
     image: signalforge-workers:latest
@@ -389,6 +415,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  import_data:
 
 networks:
   signalforge-net:

@@ -1,5 +1,7 @@
 import { parse } from 'csv-parse';
 import ExcelJS from 'exceljs';
+import { createReadStream } from 'node:fs';
+import { open } from 'node:fs/promises';
 import type { Readable } from 'node:stream';
 import type { ParsedFileResult } from './types.js';
 import { MAX_ROWS_PER_FILE } from './types.js';
@@ -189,4 +191,179 @@ async function parseXLSXBuffer(buffer: Buffer, maxRows: number): Promise<ParsedF
   }
 
   return { headers, rows, totalRowCount };
+}
+
+// ─── Streaming parsers (for large background imports) ────────────────────────
+// These never hold the whole file in memory: rows are delivered to onBatch in
+// bounded batches, and awaiting onBatch applies backpressure to the source.
+
+export interface StreamBatchHandlers {
+  onHeaders?: (headers: string[]) => void | Promise<void>;
+  onBatch: (rows: Record<string, string>[]) => Promise<void>;
+  batchSize?: number;
+  maxRows?: number;
+  /** Stop reading once maxRows is reached (for sampling/preview). */
+  stopAtMaxRows?: boolean;
+}
+
+async function readFileHead(filePath: string, bytes: number): Promise<Buffer> {
+  const fd = await open(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(bytes);
+    const { bytesRead } = await fd.read(buf, 0, bytes, 0);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await fd.close();
+  }
+}
+
+async function isZipFile(filePath: string): Promise<boolean> {
+  const head = await readFileHead(filePath, 4);
+  return head.length >= 2 && head[0] === 0x50 && head[1] === 0x4b;
+}
+
+async function detectDelimiterFromFile(filePath: string): Promise<string> {
+  const head = (await readFileHead(filePath, 65536)).toString('utf8');
+  return detectDelimiter(head);
+}
+
+export async function streamParseFile(
+  filePath: string,
+  mimeType: string,
+  handlers: StreamBatchHandlers,
+  filename?: string,
+): Promise<{ headers: string[]; totalRowCount: number }> {
+  const resolved = resolveImportMimeType(mimeType, filename);
+  const batchSize = handlers.batchSize ?? 1000;
+  const maxRows = handlers.maxRows ?? Number.MAX_SAFE_INTEGER;
+
+  if (resolved === 'text/csv') {
+    return streamParseDelimitedFile(filePath, handlers, batchSize, maxRows);
+  }
+  if (
+    resolved === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    resolved === 'application/vnd.google-apps.spreadsheet'
+  ) {
+    // A non-zip "xlsx" is usually a renamed CSV/TSV or an old .xls; stream it as text.
+    if (!(await isZipFile(filePath))) {
+      return streamParseDelimitedFile(filePath, handlers, batchSize, maxRows);
+    }
+    return streamParseXLSXFile(filePath, handlers, batchSize, maxRows);
+  }
+  throw new FileParseError(`Unsupported file type: ${mimeType}`);
+}
+
+async function streamParseDelimitedFile(
+  filePath: string,
+  handlers: StreamBatchHandlers,
+  batchSize: number,
+  maxRows: number,
+): Promise<{ headers: string[]; totalRowCount: number }> {
+  const delimiter = await detectDelimiterFromFile(filePath);
+  const parser = parse({
+    columns: true,
+    skip_empty_lines: true,
+    trim: true,
+    bom: true,
+    delimiter,
+    relax_quotes: true,
+    relax_column_count: true,
+  });
+
+  let headers: string[] = [];
+  let totalRowCount = 0;
+  let batch: Record<string, string>[] = [];
+
+  const source = createReadStream(filePath);
+  source.on('error', (err) => parser.destroy(err));
+  source.pipe(parser);
+
+  try {
+    for await (const record of parser as AsyncIterable<Record<string, string>>) {
+      if (headers.length === 0) {
+        headers = Object.keys(record);
+        await handlers.onHeaders?.(headers);
+      }
+      totalRowCount++;
+      if (totalRowCount <= maxRows) {
+        batch.push(record);
+        if (batch.length >= batchSize) {
+          await handlers.onBatch(batch);
+          batch = [];
+        }
+      }
+      if (handlers.stopAtMaxRows && totalRowCount >= maxRows) {
+        source.destroy();
+        break;
+      }
+    }
+  } catch (err) {
+    throw new FileParseError(`Could not parse the file: ${(err as Error).message}`);
+  }
+
+  if (batch.length > 0) {
+    await handlers.onBatch(batch);
+  }
+  return { headers, totalRowCount };
+}
+
+async function streamParseXLSXFile(
+  filePath: string,
+  handlers: StreamBatchHandlers,
+  batchSize: number,
+  maxRows: number,
+): Promise<{ headers: string[]; totalRowCount: number }> {
+  const reader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {});
+  let headers: string[] = [];
+  let totalRowCount = 0;
+  let batch: Record<string, string>[] = [];
+  let sawWorksheet = false;
+
+  try {
+    for await (const worksheet of reader) {
+      sawWorksheet = true;
+      for await (const row of worksheet) {
+        if (row.number === 1) {
+          const hs: string[] = [];
+          row.eachCell({ includeEmpty: true }, (cell, col) => {
+            hs[col - 1] = extractCellText(cell) || `Column ${col}`;
+          });
+          headers = hs;
+          await handlers.onHeaders?.(headers);
+          continue;
+        }
+        if (headers.length === 0) continue;
+
+        const obj: Record<string, string> = {};
+        let hasValue = false;
+        for (let i = 0; i < headers.length; i++) {
+          const text = extractCellText(row.getCell(i + 1));
+          obj[headers[i]!] = text ?? '';
+          if (text) hasValue = true;
+        }
+        if (!hasValue) continue;
+
+        totalRowCount++;
+        if (totalRowCount <= maxRows) {
+          batch.push(obj);
+          if (batch.length >= batchSize) {
+            await handlers.onBatch(batch);
+            batch = [];
+          }
+        }
+        if (handlers.stopAtMaxRows && totalRowCount >= maxRows) break;
+      }
+      break; // first worksheet only
+    }
+  } catch (err) {
+    throw new FileParseError(`Could not parse the Excel file: ${(err as Error).message}`);
+  }
+
+  if (!sawWorksheet) {
+    throw new FileParseError('The spreadsheet has no worksheets.');
+  }
+  if (batch.length > 0) {
+    await handlers.onBatch(batch);
+  }
+  return { headers, totalRowCount };
 }

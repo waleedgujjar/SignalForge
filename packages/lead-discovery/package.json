@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@signalforge/ai": "workspace:*",
+    "@signalforge/automations": "workspace:*",
     "@signalforge/campaigns": "workspace:*",
     "@signalforge/config": "workspace:*",
     "@signalforge/database": "workspace:*",

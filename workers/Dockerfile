@@ -43,6 +43,7 @@ COPY workers/inbound-worker/package.json workers/inbound-worker/
 COPY workers/inbox-reply-worker/package.json workers/inbox-reply-worker/
 COPY workers/lead-discovery-worker/package.json workers/lead-discovery-worker/
 COPY workers/lead-research-worker/package.json workers/lead-research-worker/
+COPY workers/import-worker/package.json workers/import-worker/
 COPY workers/scheduler-worker/package.json workers/scheduler-worker/
 COPY workers/verification-worker/package.json workers/verification-worker/
 COPY workers/warmup-worker/package.json workers/warmup-worker/
@@ -143,6 +144,8 @@ COPY --from=build /app/workers/lead-discovery-worker/dist ./workers/lead-discove
 COPY --from=build /app/workers/lead-discovery-worker/package.json ./workers/lead-discovery-worker/
 COPY --from=build /app/workers/lead-research-worker/dist ./workers/lead-research-worker/dist
 COPY --from=build /app/workers/lead-research-worker/package.json ./workers/lead-research-worker/
+COPY --from=build /app/workers/import-worker/dist ./workers/import-worker/dist
+COPY --from=build /app/workers/import-worker/package.json ./workers/import-worker/
 COPY --from=build /app/workers/scheduler-worker/dist ./workers/scheduler-worker/dist
 COPY --from=build /app/workers/scheduler-worker/package.json ./workers/scheduler-worker/
 COPY --from=build /app/workers/verification-worker/dist ./workers/verification-worker/dist

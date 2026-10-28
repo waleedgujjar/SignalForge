@@ -111,3 +111,19 @@ export {
   type DiscoveredLeadExportRow,
   type ExportColumn,
 } from './export.js';
+export {
+  processImportRows,
+  computeFieldStats,
+  toPreviewRows,
+  mergeLeadFields,
+  executeImportRows,
+  persistLeadBatch,
+  formatMappingsResponse,
+  type ProcessedImportRow,
+  type ImportFieldStats,
+  type PreviewImportRow,
+  type ProcessRowsResult,
+  type ImportExecutionSummary,
+  type ExecuteImportOptions,
+  type PersistBatchResult,
+} from './import-processor.js';

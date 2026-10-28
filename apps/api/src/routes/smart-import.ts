@@ -1,8 +1,15 @@
 import { Readable } from 'node:stream';
+import { createWriteStream } from 'node:fs';
+import { mkdir, unlink } from 'node:fs/promises';
+import { pipeline } from 'node:stream/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import type { FastifyPluginAsync } from 'fastify';
 import { prisma, type Prisma } from '@signalforge/database';
 import {
   parseFileStream,
+  streamParseFile,
   resolveImportMimeType,
   detectLeadImportMappings,
   buildLeadImportMappingsRecord,
@@ -12,7 +19,9 @@ import {
   QUEUE_NAMES,
   createQueue,
   createRedisConnection,
+  enqueueLeadImport,
   ENRICHMENT_JOB_OPTIONS,
+  type LeadImportQueuePayload,
 } from '@signalforge/queue';
 import { loadEnv } from '@signalforge/config';
 import { requireWorkspaceGuard, getWorkspaceId } from '../plugins/auth.js';
@@ -24,6 +33,14 @@ import {
   executeImportRows,
   formatMappingsResponse,
 } from '../services/lead-import-processor.js';
+
+// Uploaded files are streamed to this shared directory; the import-worker reads
+// them from the same path (a shared Docker volume in production).
+const IMPORT_DIR = process.env.IMPORT_DATA_DIR ?? join(tmpdir(), 'signalforge-imports');
+const PREVIEW_SAMPLE_ROWS = 200;
+// The synchronous endpoint (campaign uploads) stays bounded; large files go
+// through the background flow (/smart-import/preview + /start).
+const SYNC_MAX_ROWS = 10_000;
 
 interface ImportOptions {
   mergeStrategy?: 'skip' | 'fill_missing';
@@ -52,6 +69,23 @@ function parseImportOptions(raw: unknown): ImportOptions {
   return obj as ImportOptions;
 }
 
+function getUserId(request: { user?: { userId?: string } }): string {
+  return request.user?.userId ?? 'unknown';
+}
+
+function sanitizeFileName(name: string): string {
+  return (name || 'upload').replace(/[^\w.-]+/g, '_').slice(0, 120) || 'upload';
+}
+
+function validateMappings(raw: unknown): Record<string, string> | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('mappings must be an object');
+  for (const v of Object.values(raw as Record<string, unknown>)) {
+    if (typeof v !== 'string') throw new Error('mapping values must be strings');
+  }
+  return raw as Record<string, string>;
+}
+
 function getEnrichmentQueue() {
   const env = loadEnv();
   const connection = createRedisConnection(env.REDIS_URL);
@@ -70,55 +104,7 @@ async function parseUploadedFile(data: { toBuffer: () => Promise<Buffer>; filena
 export const smartImportRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', requireWorkspaceGuard().preHandler);
 
-  app.post('/smart-import/preview', async (request, reply) => {
-    const data = await request.file();
-    if (!data) {
-      return reply.status(400).send({ error: 'No file uploaded' });
-    }
-
-    const optionsRaw = (data.fields as Record<string, { value?: string }>)?.options?.value;
-    const options: ImportOptions = parseImportOptions(optionsRaw ? JSON.parse(optionsRaw) : {});
-
-    let parseResult: Awaited<ReturnType<typeof parseUploadedFile>>;
-    try {
-      parseResult = await parseUploadedFile(data);
-    } catch (err) {
-      if (err instanceof FileParseError) {
-        return reply.status(400).send({ error: err.message });
-      }
-      throw err;
-    }
-    const { parsed } = parseResult;
-
-    if (!parsed.rows.length && parsed.totalRowCount === 0) {
-      return reply.status(400).send({ error: 'File contains no data rows' });
-    }
-
-    const mappingResult = detectLeadImportMappings(parsed.headers, parsed.rows, options.mappings);
-    const mappings = buildLeadImportMappingsRecord(mappingResult);
-
-    if (Object.keys(mappings).length === 0) {
-      return reply.status(400).send({
-        error: 'Could not detect any mappable columns. Check that your file has recognizable headers or data patterns.',
-        headers: parsed.headers,
-      });
-    }
-
-    const processResult = processImportRows(parsed.rows, mappings, mappingResult.unmappedColumns);
-    const fieldStats = computeFieldStats(processResult.processedRows, parsed.totalRowCount);
-
-    return {
-      headers: parsed.headers,
-      totalRowCount: parsed.totalRowCount,
-      detectedMappings: formatMappingsResponse(mappingResult.mappings),
-      unmappedColumns: mappingResult.unmappedColumns,
-      fieldStats,
-      previewRows: toPreviewRows(processResult.processedRows, 20),
-      skipped: processResult.skipped,
-      errors: processResult.errors,
-    };
-  });
-
+  // ── Synchronous import (small files; used by campaign lead uploads) ──────────
   app.post('/smart-import', async (request, reply) => {
     const workspaceId = getWorkspaceId(request);
 
@@ -146,8 +132,10 @@ export const smartImportRoutes: FastifyPluginAsync = async (app) => {
     if (!parsed.rows.length) {
       return reply.status(400).send({ error: 'File contains no data rows' });
     }
-    if (parsed.rows.length > 10_000) {
-      return reply.status(400).send({ error: 'Maximum 10,000 rows per import' });
+    if (parsed.rows.length > SYNC_MAX_ROWS) {
+      return reply.status(400).send({
+        error: `This file has more than ${SYNC_MAX_ROWS.toLocaleString()} rows. Use the Import Leads page, which processes large files in the background.`,
+      });
     }
 
     const mappingResult = detectLeadImportMappings(parsed.headers, parsed.rows, options.mappings);
@@ -214,7 +202,6 @@ export const smartImportRoutes: FastifyPluginAsync = async (app) => {
             }),
           ),
         );
-
         await Promise.all(
           enrichmentRecords.map((record) =>
             queue.add('enrich-lead', {
@@ -224,7 +211,6 @@ export const smartImportRoutes: FastifyPluginAsync = async (app) => {
             }, ENRICHMENT_JOB_OPTIONS),
           ),
         );
-
         summary.qualificationQueued = enrichmentRecords.length;
       } catch {
         request.log.warn('Failed to enqueue enrichment jobs for imported leads');
@@ -239,7 +225,7 @@ export const smartImportRoutes: FastifyPluginAsync = async (app) => {
           workspaceId,
           source: 'CSV_IMPORT',
           status: 'COMPLETED',
-          initiatedByUserId: (request as { user?: { userId: string } }).user?.userId ?? 'unknown',
+          initiatedByUserId: getUserId(request),
           totalFiles: 1,
           totalRows: summary.totalRows,
           importedCount: summary.created,
@@ -286,5 +272,201 @@ export const smartImportRoutes: FastifyPluginAsync = async (app) => {
       mappings: formatMappingsResponse(mappingResult.mappings),
       errors: processResult.errors.slice(0, 50),
     };
+  });
+
+  // ── Background flow for large files: upload + sample preview ─────────────────
+  // Streams the full file to disk (bounded memory), parses only a small sample
+  // for column detection, and records a PENDING LeadImport that /start enqueues.
+  app.post('/smart-import/preview', async (request, reply) => {
+    const workspaceId = getWorkspaceId(request);
+    const data = await request.file();
+    if (!data) {
+      return reply.status(400).send({ error: 'No file uploaded' });
+    }
+
+    await mkdir(IMPORT_DIR, { recursive: true });
+    const token = randomUUID();
+    const fileName = data.filename || 'upload';
+    const filePath = join(IMPORT_DIR, `${token}__${sanitizeFileName(fileName)}`);
+
+    try {
+      await pipeline(data.file, createWriteStream(filePath));
+    } catch {
+      await unlink(filePath).catch(() => {});
+      return reply.status(400).send({ error: 'Upload failed. Please try again.' });
+    }
+    if (data.file.truncated) {
+      await unlink(filePath).catch(() => {});
+      return reply.status(413).send({ error: 'File exceeds the maximum upload size.' });
+    }
+
+    const mimeType = resolveImportMimeType(data.mimetype, fileName);
+
+    let headers: string[] = [];
+    const sampleRows: Record<string, string>[] = [];
+    try {
+      await streamParseFile(
+        filePath,
+        mimeType,
+        {
+          batchSize: PREVIEW_SAMPLE_ROWS,
+          maxRows: PREVIEW_SAMPLE_ROWS,
+          stopAtMaxRows: true,
+          onHeaders: (hs) => {
+            headers = hs;
+          },
+          onBatch: async (rows) => {
+            for (const r of rows) {
+              if (sampleRows.length < PREVIEW_SAMPLE_ROWS) sampleRows.push(r);
+            }
+          },
+        },
+        fileName,
+      );
+    } catch (err) {
+      await unlink(filePath).catch(() => {});
+      if (err instanceof FileParseError) {
+        return reply.status(400).send({ error: err.message });
+      }
+      throw err;
+    }
+
+    if (sampleRows.length === 0) {
+      await unlink(filePath).catch(() => {});
+      return reply.status(400).send({ error: 'File contains no data rows' });
+    }
+
+    const mappingResult = detectLeadImportMappings(headers, sampleRows);
+    const mappings = buildLeadImportMappingsRecord(mappingResult);
+    if (Object.keys(mappings).length === 0) {
+      await unlink(filePath).catch(() => {});
+      return reply.status(400).send({
+        error: 'Could not detect any mappable columns. Check that your file has recognizable headers.',
+        headers,
+      });
+    }
+
+    const processResult = processImportRows(sampleRows, mappings, mappingResult.unmappedColumns);
+    const fieldStats = computeFieldStats(processResult.processedRows, sampleRows.length);
+
+    const leadImport = await prisma.leadImport.create({
+      data: {
+        workspaceId,
+        source: 'CSV_IMPORT',
+        status: 'PENDING',
+        initiatedByUserId: getUserId(request),
+        totalFiles: 1,
+        columnMappings: mappings,
+        importOptions: { filePath, mimeType, fileName } as unknown as Prisma.InputJsonValue,
+        files: {
+          create: {
+            sourceFileId: token,
+            sourceFileName: fileName,
+            sourceFileMimeType: mimeType,
+            sourceFileSize: data.file.bytesRead,
+            detectedColumns: headers,
+            status: 'PENDING',
+          },
+        },
+      },
+    });
+
+    return {
+      importId: leadImport.id,
+      headers,
+      sampleSize: sampleRows.length,
+      detectedMappings: formatMappingsResponse(mappingResult.mappings),
+      unmappedColumns: mappingResult.unmappedColumns,
+      fieldStats,
+      previewRows: toPreviewRows(processResult.processedRows, 20),
+      skipped: processResult.skipped,
+      noEmail: processResult.noEmail,
+      invalidEmail: processResult.invalidEmail,
+      errors: processResult.errors,
+    };
+  });
+
+  app.post('/smart-import/:importId/start', async (request, reply) => {
+    const workspaceId = getWorkspaceId(request);
+    const { importId } = request.params as { importId: string };
+    const body = (request.body ?? {}) as { mappings?: unknown; mergeStrategy?: unknown };
+
+    const mergeStrategy = body.mergeStrategy === 'fill_missing' ? 'fill_missing' : 'skip';
+    let mappings: Record<string, string> | undefined;
+    try {
+      mappings = validateMappings(body.mappings);
+    } catch (err) {
+      return reply.status(400).send({ error: err instanceof Error ? err.message : 'Invalid mappings' });
+    }
+
+    const imp = await prisma.leadImport.findFirst({ where: { id: importId, workspaceId } });
+    if (!imp) return reply.status(404).send({ error: 'Import not found' });
+    if (imp.status !== 'PENDING') {
+      return reply.status(409).send({ error: 'This import has already been started.' });
+    }
+
+    const opts = (imp.importOptions ?? {}) as { filePath?: string; mimeType?: string; fileName?: string };
+    if (!opts.filePath) {
+      return reply.status(400).send({ error: 'The uploaded file is no longer available. Please re-upload.' });
+    }
+
+    const effectiveMappings =
+      mappings ?? ((imp.columnMappings as Record<string, string> | null) ?? undefined);
+
+    const env = loadEnv();
+    const connection = createRedisConnection(env.REDIS_URL);
+    const queue = createQueue<LeadImportQueuePayload>(QUEUE_NAMES.LEAD_IMPORT, connection);
+    await enqueueLeadImport(queue, {
+      importId,
+      workspaceId,
+      filePath: opts.filePath,
+      fileName: opts.fileName ?? 'upload',
+      mimeType: opts.mimeType ?? 'text/csv',
+      mappings: effectiveMappings,
+      mergeStrategy,
+      initiatedByUserId: getUserId(request),
+    });
+
+    await prisma.leadImport.update({
+      where: { id: importId },
+      data: {
+        status: 'SCANNING',
+        columnMappings: effectiveMappings ?? (imp.columnMappings ?? undefined),
+        importOptions: { ...opts, mergeStrategy } as unknown as Prisma.InputJsonValue,
+        startedAt: new Date(),
+      },
+    });
+
+    return reply.status(202).send({ importId });
+  });
+
+  app.get('/smart-import/imports/:importId/progress', async (request, reply) => {
+    const workspaceId = getWorkspaceId(request);
+    const { importId } = request.params as { importId: string };
+
+    const imp = await prisma.leadImport.findFirst({
+      where: { id: importId, workspaceId },
+      select: {
+        status: true,
+        totalRows: true,
+        importedCount: true,
+        skippedCount: true,
+        duplicateCount: true,
+        errorCount: true,
+        completedAt: true,
+        files: {
+          select: {
+            sourceFileName: true,
+            status: true,
+            importedRowCount: true,
+            skippedRowCount: true,
+            errorRowCount: true,
+          },
+        },
+      },
+    });
+
+    if (!imp) return reply.status(404).send({ error: 'Import not found' });
+    return imp;
   });
 };

@@ -15,7 +15,7 @@ export {
 } from './types.js';
 
 export { GoogleDriveAdapter } from './google-drive.js';
-export { parseFileStream, FileParseError } from './file-parser.js';
+export { parseFileStream, streamParseFile, FileParseError, type StreamBatchHandlers } from './file-parser.js';
 export { resolveImportMimeType } from './mime.js';
 export {
   detectColumnMappings,
