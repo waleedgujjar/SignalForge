@@ -199,6 +199,10 @@ RUN set -e; \
     ln -sf ../../packages/warmup node_modules/@signalforge/warmup; \
     ln -sf ../../packages/website-scanner node_modules/@signalforge/website-scanner
 
+# Shared lead-import upload dir (a volume mounts here for the import-worker).
+# Create it node-owned so a fresh named volume initializes writable by node.
+RUN mkdir -p /data/imports && chown -R node:node /data/imports
+
 USER node
 
 # Default: email-worker. Override per service in docker-compose.

@@ -168,6 +168,10 @@ RUN set -e; \
     ln -sf ../../packages/website-scanner node_modules/@signalforge/website-scanner; \
     ln -sf ../../apps/api node_modules/@signalforge/api
 
+# Shared lead-import upload dir (a volume mounts here at runtime). Create it
+# node-owned so a fresh named volume initializes writable by the node user.
+RUN mkdir -p /data/imports && chown -R node:node /data/imports
+
 USER node
 EXPOSE 4000
 
