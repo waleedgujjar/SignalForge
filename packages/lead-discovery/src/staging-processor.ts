@@ -386,6 +386,11 @@ export interface DedupSummary {
  * removed. Idempotent: operates only on rows still marked UNIQUE.
  */
 export async function dedupDataset(datasetId: string): Promise<DedupSummary> {
+  // The dataset's rows were just bulk-inserted, so table statistics still
+  // describe the table from before the insert; without this the planner picks
+  // nested-loop joins over the fresh rows and the dedup UPDATEs take minutes.
+  await prisma.$executeRaw`ANALYZE "StagedLead"`;
+
   let duplicates = 0;
 
   for (const key of DEDUP_KEYS) {
