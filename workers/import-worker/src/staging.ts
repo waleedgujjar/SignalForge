@@ -31,6 +31,29 @@ export async function processLeadProcessingJob(
   return processTransfer(payload);
 }
 
+/**
+ * Final-failure cleanup, called from the worker's 'failed' event. Covers crashes
+ * the in-processor catch blocks never see (OOM kills, stalled-job exhaustion),
+ * which would otherwise leave the dataset stuck in PROCESSING with no retry path.
+ */
+export async function markStagingJobFailed(
+  payload: LeadProcessingQueuePayload,
+  message: string,
+): Promise<void> {
+  const errorLog = [{ message: `Processing stopped unexpectedly: ${message}` }];
+  if (payload.kind === 'process-dataset') {
+    await prisma.stagingDataset.updateMany({
+      where: { id: payload.datasetId, status: { in: ['SCANNING', 'PROCESSING'] } },
+      data: { status: 'FAILED', completedAt: new Date(), errorLog },
+    });
+    return;
+  }
+  await prisma.leadImport.updateMany({
+    where: { id: payload.leadImportId, status: { in: ['PENDING', 'SCANNING', 'PROCESSING'] } },
+    data: { status: 'FAILED', completedAt: new Date(), errorLog },
+  });
+}
+
 function sanitizeMappings(raw?: Record<string, string>): Record<string, StagingField> {
   const result: Record<string, StagingField> = {};
   if (!raw) return result;

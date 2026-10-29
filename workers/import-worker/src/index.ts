@@ -10,7 +10,7 @@ import {
   type LeadProcessingQueuePayload,
 } from '@signalforge/queue';
 import { processLeadImportJob } from './processor.js';
-import { processLeadProcessingJob } from './staging.js';
+import { processLeadProcessingJob, markStagingJobFailed } from './staging.js';
 
 function log(message: string, context: Record<string, unknown>): void {
   console.info(JSON.stringify({ worker: 'import-worker', message, ...context, timestamp: new Date().toISOString() }));
@@ -63,6 +63,11 @@ async function startWorker() {
 
   stagingWorker.on('failed', (job, error) => {
     log('Staging job failed', { jobId: job?.id, kind: job?.data.kind, datasetId: job?.data.datasetId, error: error.message });
+    if (job?.data) {
+      void markStagingJobFailed(job.data, error.message).catch((err) =>
+        log('Could not mark staging job failed', { jobId: job.id, error: (err as Error).message }),
+      );
+    }
   });
 
   registerWorkerShutdown([worker, stagingWorker]);

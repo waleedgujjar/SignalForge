@@ -136,6 +136,9 @@ services:
     env_file: [.env.production]
     environment:
       IMPORT_DATA_DIR: /data/imports
+      # Keep V8's heap inside the container limit: by default it sizes the heap
+      # from host memory and gets OOM-killed by the cgroup before ever GC'ing.
+      NODE_OPTIONS: --max-old-space-size=768
     volumes:
       - import_data:/data/imports
     depends_on:
@@ -148,7 +151,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 1024M
 
   scheduler-worker:
     image: signalforge-workers:latest
