@@ -18,7 +18,8 @@
     "@signalforge/integrations": "workspace:*",
     "@signalforge/lead-discovery": "workspace:*",
     "@signalforge/queue": "workspace:*",
-    "dotenv": "^16.5.0"
+    "dotenv": "^16.5.0",
+    "@signalforge/ai": "workspace:*"
   },
   "devDependencies": {
     "@signalforge/eslint-config": "workspace:*",

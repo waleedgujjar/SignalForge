@@ -1,11 +1,12 @@
 import { parse } from 'csv-parse';
 import ExcelJS from 'exceljs';
+import * as SheetJS from 'xlsx';
 import { createReadStream } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { open, readFile } from 'node:fs/promises';
 import type { Readable } from 'node:stream';
 import type { ParsedFileResult } from './types.js';
 import { MAX_ROWS_PER_FILE } from './types.js';
-import { resolveImportMimeType } from './mime.js';
+import { resolveImportMimeType, XLS_MIME, XLSX_MIME } from './mime.js';
 import { extractCellText } from './cell-extractor.js';
 
 interface ParseOptions {
@@ -67,14 +68,88 @@ export async function parseFileStream(
     return parseDelimitedBuffer(buffer, maxRows);
   }
 
-  if (
-    resolved === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-    resolved === 'application/vnd.google-apps.spreadsheet'
-  ) {
+  if (resolved === XLS_MIME) {
+    // Extension says legacy .xls, but sniff the real format: files are often
+    // mislabeled (a zip is really .xlsx; plain text is really CSV/TSV).
+    if (isOleBuffer(buffer)) return parseXLSBuffer(buffer, maxRows);
+    return parseXLSXBuffer(buffer, maxRows);
+  }
+
+  if (resolved === XLSX_MIME || resolved === 'application/vnd.google-apps.spreadsheet') {
     return parseXLSXBuffer(buffer, maxRows);
   }
 
   throw new FileParseError(`Unsupported file type: ${mimeType}`);
+}
+
+// Legacy binary .xls files are OLE compound documents (magic D0 CF 11 E0).
+function isOleBuffer(buffer: Buffer): boolean {
+  return (
+    buffer.length >= 8 &&
+    buffer[0] === 0xd0 &&
+    buffer[1] === 0xcf &&
+    buffer[2] === 0x11 &&
+    buffer[3] === 0xe0
+  );
+}
+
+const XLS_MAX_BYTES = 30 * 1024 * 1024;
+
+/** Parse a legacy binary .xls workbook (first sheet) via SheetJS. */
+function parseXLSBuffer(buffer: Buffer, maxRows: number): ParsedFileResult {
+  if (buffer.length > XLS_MAX_BYTES) {
+    throw new FileParseError(
+      'Legacy .xls files over 30 MB are not supported. Save the file as .xlsx or .csv and try again.',
+    );
+  }
+  let workbook: SheetJS.WorkBook;
+  try {
+    workbook = SheetJS.read(buffer, { type: 'buffer' });
+  } catch {
+    throw new FileParseError(
+      'The .xls file could not be read. Open it in Excel and save it as .xlsx or .csv, then re-upload.',
+    );
+  }
+  const sheetName = workbook.SheetNames[0];
+  const sheet = sheetName ? workbook.Sheets[sheetName] : undefined;
+  if (!sheet) {
+    throw new FileParseError('The spreadsheet has no worksheets.');
+  }
+
+  const matrix = SheetJS.utils.sheet_to_json<unknown[]>(sheet, {
+    header: 1,
+    defval: '',
+    raw: false,
+    blankrows: false,
+  });
+  if (matrix.length === 0) {
+    return { headers: [], rows: [], totalRowCount: 0 };
+  }
+
+  const headers = (matrix[0] ?? []).map(
+    (h, i) => String(h ?? '').trim() || `Column ${i + 1}`,
+  );
+  const rows: Record<string, string>[] = [];
+  let totalRowCount = 0;
+
+  for (let i = 1; i < matrix.length; i++) {
+    const cells = matrix[i] ?? [];
+    const obj: Record<string, string> = {};
+    let hasValue = false;
+    headers.forEach((header, c) => {
+      const value = cells[c];
+      const text = value === null || value === undefined ? '' : String(value).trim();
+      obj[header] = text;
+      if (text) hasValue = true;
+    });
+    if (!hasValue) continue;
+    totalRowCount++;
+    if (rows.length < maxRows) {
+      rows.push(obj);
+    }
+  }
+
+  return { headers, rows, totalRowCount };
 }
 
 function parseDelimitedBuffer(buffer: Buffer, maxRows: number): Promise<ParsedFileResult> {
@@ -128,7 +203,11 @@ async function parseXLSXBuffer(buffer: Buffer, maxRows: number): Promise<ParsedF
   const isZip = buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b;
 
   if (!isZip) {
-    // Frequently a CSV/TSV (or an old binary .xls) saved with an .xlsx extension.
+    // An old binary .xls saved with an .xlsx extension — parse it as .xls.
+    if (isOleBuffer(buffer)) {
+      return parseXLSBuffer(buffer, maxRows);
+    }
+    // Frequently a CSV/TSV saved with an .xlsx extension.
     // If it reads as text, parse it as delimited data; otherwise fail clearly.
     const text = buffer.toString('utf8');
     const printableRatio =
@@ -139,7 +218,7 @@ async function parseXLSXBuffer(buffer: Buffer, maxRows: number): Promise<ParsedF
       return parseDelimitedBuffer(buffer, maxRows);
     }
     throw new FileParseError(
-      'This file is not a valid .xlsx workbook. If it is an older .xls file, open it in Excel and save it as .xlsx or .csv, then re-upload.',
+      'This file is not a valid Excel workbook. Save it as .xlsx or .csv and try again.',
     );
   }
 
@@ -222,9 +301,35 @@ async function isZipFile(filePath: string): Promise<boolean> {
   return head.length >= 2 && head[0] === 0x50 && head[1] === 0x4b;
 }
 
+async function isOleFile(filePath: string): Promise<boolean> {
+  return isOleBuffer(await readFileHead(filePath, 8));
+}
+
 async function detectDelimiterFromFile(filePath: string): Promise<string> {
   const head = (await readFileHead(filePath, 65536)).toString('utf8');
   return detectDelimiter(head);
+}
+
+/**
+ * Legacy .xls cannot be streamed (OLE container); parse buffered — capped at
+ * 30 MB — and deliver rows through the same batch interface.
+ */
+async function streamParseXLSFile(
+  filePath: string,
+  handlers: StreamBatchHandlers,
+  batchSize: number,
+  maxRows: number,
+): Promise<{ headers: string[]; totalRowCount: number }> {
+  const buffer = await readFile(filePath);
+  const parsed = parseXLSBuffer(buffer, maxRows);
+  if (parsed.headers.length > 0) {
+    await handlers.onHeaders?.(parsed.headers);
+  }
+  for (let i = 0; i < parsed.rows.length; i += batchSize) {
+    await handlers.onBatch(parsed.rows.slice(i, i + batchSize));
+    if (handlers.stopAtMaxRows && i + batchSize >= maxRows) break;
+  }
+  return { headers: parsed.headers, totalRowCount: parsed.totalRowCount };
 }
 
 export async function streamParseFile(
@@ -240,12 +345,22 @@ export async function streamParseFile(
   if (resolved === 'text/csv') {
     return streamParseDelimitedFile(filePath, handlers, batchSize, maxRows);
   }
-  if (
-    resolved === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-    resolved === 'application/vnd.google-apps.spreadsheet'
-  ) {
-    // A non-zip "xlsx" is usually a renamed CSV/TSV or an old .xls; stream it as text.
+  if (resolved === XLS_MIME) {
+    // Sniff the real format: .xls names often hide a zip (.xlsx) or plain text.
+    if (await isOleFile(filePath)) {
+      return streamParseXLSFile(filePath, handlers, batchSize, maxRows);
+    }
+    if (await isZipFile(filePath)) {
+      return streamParseXLSXFile(filePath, handlers, batchSize, maxRows);
+    }
+    return streamParseDelimitedFile(filePath, handlers, batchSize, maxRows);
+  }
+  if (resolved === XLSX_MIME || resolved === 'application/vnd.google-apps.spreadsheet') {
     if (!(await isZipFile(filePath))) {
+      // An old binary .xls with an .xlsx name, or a renamed CSV/TSV.
+      if (await isOleFile(filePath)) {
+        return streamParseXLSFile(filePath, handlers, batchSize, maxRows);
+      }
       return streamParseDelimitedFile(filePath, handlers, batchSize, maxRows);
     }
     return streamParseXLSXFile(filePath, handlers, batchSize, maxRows);

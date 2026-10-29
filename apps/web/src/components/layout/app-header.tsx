@@ -20,6 +20,7 @@ const routeLabels: Record<string, string> = {
   mailboxes: 'Mailboxes',
   campaigns: 'Campaigns',
   leads: 'Leads',
+  'large-leads': 'Large Lead Data',
   tags: 'Tags',
   lists: 'Lists',
   import: 'Import',

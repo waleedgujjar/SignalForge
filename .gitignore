@@ -54,3 +54,5 @@ signup2.json
 
 # Claude Code
 .claude/
+
+.vercel

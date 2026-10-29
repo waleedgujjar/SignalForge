@@ -112,6 +112,24 @@ export {
   type ExportColumn,
 } from './export.js';
 export {
+  STAGING_FIELDS,
+  detectStagingMappings,
+  normalizeUsername,
+  categorizeStagedLead,
+  buildStagedLeadData,
+  buildStagedLeadWhere,
+  dedupDataset,
+  mergeDuplicateFieldsIntoCanonicals,
+  recomputeDatasetStats,
+  buildTransferRows,
+  UNCATEGORIZED,
+  type StagingField,
+  type StagedLeadFilter,
+  type CategoryResult,
+  type DedupSummary,
+  type StagedTransferRowResult,
+} from './staging-processor.js';
+export {
   processImportRows,
   computeFieldStats,
   toPreviewRows,

@@ -24,7 +24,7 @@ import {
   type LeadImportQueuePayload,
 } from '@signalforge/queue';
 import { loadEnv } from '@signalforge/config';
-import { requireWorkspaceGuard, getWorkspaceId } from '../plugins/auth.js';
+import { requireWorkspaceOrUploadToken, getWorkspaceId } from '../plugins/auth.js';
 import { isLinkedInResearchEnabled, leadResearchService } from '@signalforge/lead-research';
 import {
   processImportRows,
@@ -102,7 +102,9 @@ async function parseUploadedFile(data: { toBuffer: () => Promise<Buffer>; filena
 }
 
 export const smartImportRoutes: FastifyPluginAsync = async (app) => {
-  app.addHook('preHandler', requireWorkspaceGuard().preHandler);
+  // Session cookie (via the web proxy) or a short-lived upload token (direct
+  // large uploads from the browser to this origin).
+  app.addHook('preHandler', requireWorkspaceOrUploadToken().preHandler);
 
   // ── Synchronous import (small files; used by campaign lead uploads) ──────────
   app.post('/smart-import', async (request, reply) => {

@@ -99,3 +99,9 @@ export {
   LEAD_IMPORT_JOB_OPTIONS,
   type LeadImportQueuePayload,
 } from './lead-import.js';
+export {
+  enqueueLeadProcessing,
+  LEAD_PROCESSING_JOB_OPTIONS,
+  type LeadProcessingQueuePayload,
+  type StagedLeadFilterPayload,
+} from './lead-processing.js';

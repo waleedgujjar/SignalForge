@@ -1,6 +1,14 @@
 /** Same-origin proxy (/api → API server) so session cookies work reliably in the browser. */
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '/api';
 
+/**
+ * Public API origin for LARGE requests (file uploads, big exports). The /api
+ * proxy (Vercel rewrite) drops large bodies with a 502, so uploads go directly
+ * to the API origin, authenticated with a short-lived upload token. Empty in
+ * dev → everything stays on the same-origin proxy.
+ */
+const API_ORIGIN = process.env.NEXT_PUBLIC_API_ORIGIN ?? '';
+
 const REQUEST_TIMEOUT_MS = 15_000;
 
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -925,11 +933,20 @@ export interface SmartImportResult {
   errors: SmartImportError[];
 }
 
-async function uploadSmartImportFile(
-  endpoint: string,
+export async function fetchUploadToken(): Promise<{ token: string; expiresAt: string }> {
+  return apiFetch('/uploads/token', { method: 'POST' });
+}
+
+/**
+ * Multipart upload. When NEXT_PUBLIC_API_ORIGIN is configured, the file goes
+ * DIRECTLY to the API origin with a short-lived bearer token (the /api proxy
+ * cannot carry large bodies); otherwise it uses the same-origin proxy.
+ */
+async function uploadMultipart(
+  path: string,
   file: File,
   options?: { mergeStrategy?: 'skip' | 'fill_missing'; mappings?: Record<string, string> },
-  timeoutMs = 120_000,
+  timeoutMs = 600_000,
 ): Promise<Response> {
   const formData = new FormData();
   formData.append('file', file);
@@ -937,13 +954,24 @@ async function uploadSmartImportFile(
     formData.append('options', JSON.stringify(options));
   }
 
+  const headers: Record<string, string> = {};
+  let base = API_URL;
+  let credentials: RequestCredentials = 'include';
+  if (API_ORIGIN) {
+    const { token } = await fetchUploadToken();
+    headers.Authorization = `Bearer ${token}`;
+    base = API_ORIGIN;
+    credentials = 'omit';
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await fetch(`${API_URL}/leads/${endpoint}`, {
+    return await fetch(`${base}${path}`, {
       method: 'POST',
-      credentials: 'include',
+      credentials,
+      headers,
       body: formData,
       signal: controller.signal,
     });
@@ -955,6 +983,15 @@ async function uploadSmartImportFile(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function uploadSmartImportFile(
+  endpoint: string,
+  file: File,
+  options?: { mergeStrategy?: 'skip' | 'fill_missing'; mappings?: Record<string, string> },
+  timeoutMs = 120_000,
+): Promise<Response> {
+  return uploadMultipart(`/leads/${endpoint}`, file, options, timeoutMs);
 }
 
 /** Uploads the full file (streamed to disk server-side) and returns a sample preview. */
@@ -4021,4 +4058,182 @@ export async function markResearchVerified(id: string): Promise<LeadResearch> {
 
 export async function retryResearch(id: string): Promise<{ researchId: string; status: 'QUEUED' }> {
   return apiFetch(`/lead-research/research/${id}/retry`, { method: 'POST' });
+}
+
+// ─── Large Lead Data (staging) ────────────────────────────────────────────────
+
+export type StagedLeadRowStatus = 'UNIQUE' | 'DUPLICATE' | 'REVIEW' | 'INVALID';
+
+export interface StagingDataset {
+  id: string;
+  name: string;
+  sourceFileName: string;
+  sourceFileSize: number | null;
+  mimeType: string | null;
+  status: ImportStatus;
+  totalRows: number;
+  stagedCount: number;
+  uniqueCount: number;
+  duplicateCount: number;
+  reviewCount: number;
+  invalidCount: number;
+  categorizedCount: number;
+  importedCount: number;
+  errorCount: number;
+  columnMappings: Record<string, string>;
+  config?: { headers?: string[]; aiCategorization?: boolean };
+  errorLog: Array<{ row?: number; message: string }>;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface StagedLeadRow {
+  id: string;
+  username: string | null;
+  name: string | null;
+  bio: string | null;
+  category: string | null;
+  website: string | null;
+  email: string | null;
+  phone: string | null;
+  status: StagedLeadRowStatus;
+  duplicateOfId: string | null;
+  dedupReason: string | null;
+  assignedCategory: string | null;
+  categoryConfidence: number | null;
+  categoryReason: string | null;
+  sourceRow: number;
+  importedLeadId: string | null;
+  importedAt: string | null;
+  rawData: Record<string, string>;
+}
+
+export interface StagingUploadResult {
+  datasetId: string;
+  headers: string[];
+  detectedMappings: Record<string, string>;
+  previewRows: Array<{
+    username: string | null;
+    name: string | null;
+    category: string | null;
+    website: string | null;
+    email: string | null;
+    phone: string | null;
+  }>;
+  sampleStats: { sampleSize: number; withEmail: number; withWebsite: number; invalid: number };
+}
+
+export interface StagedLeadFilterParams {
+  status?: string;
+  category?: string;
+  hasEmail?: string;
+  hasWebsite?: string;
+  search?: string;
+}
+
+export interface TransferPreview {
+  selected: number;
+  importable: number;
+  noEmail: number;
+  alreadyImported: number;
+  existingInLeads?: number;
+}
+
+export async function uploadStagingDataset(file: File): Promise<StagingUploadResult> {
+  const response = await uploadMultipart('/staging/datasets', file, undefined, 600_000);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: `Request failed (${response.status})` }));
+    throw new Error(err.error ?? `HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function fetchStagingDatasets(): Promise<{ data: StagingDataset[] }> {
+  return apiFetch('/staging/datasets');
+}
+
+export async function fetchStagingDataset(id: string): Promise<StagingDataset> {
+  return apiFetch(`/staging/datasets/${id}`);
+}
+
+export async function fetchStagingProgress(id: string): Promise<
+  Pick<
+    StagingDataset,
+    | 'status'
+    | 'totalRows'
+    | 'stagedCount'
+    | 'uniqueCount'
+    | 'duplicateCount'
+    | 'reviewCount'
+    | 'invalidCount'
+    | 'categorizedCount'
+    | 'importedCount'
+    | 'errorCount'
+    | 'completedAt'
+  >
+> {
+  return apiFetch(`/staging/datasets/${id}/progress`);
+}
+
+export async function startStagingDataset(
+  id: string,
+  body: { mappings?: Record<string, string>; aiCategorization?: boolean },
+): Promise<{ datasetId: string }> {
+  return apiFetch(`/staging/datasets/${id}/start`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function fetchStagedLeads(
+  id: string,
+  params: Record<string, string>,
+): Promise<{ data: StagedLeadRow[]; pagination: { page: number; limit: number; total: number; totalPages: number } }> {
+  const qs = new URLSearchParams(params);
+  return apiFetch(`/staging/datasets/${id}/leads?${qs}`);
+}
+
+export async function fetchStagingCategories(
+  id: string,
+): Promise<{ data: Array<{ category: string; count: number }> }> {
+  return apiFetch(`/staging/datasets/${id}/categories`);
+}
+
+export async function bulkSetStagedCategory(
+  id: string,
+  body: { ids?: string[]; filter?: StagedLeadFilterParams; category: string },
+): Promise<{ updated: number }> {
+  return apiFetch(`/staging/datasets/${id}/leads/bulk`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export async function transferStagedLeads(
+  id: string,
+  body: {
+    ids?: string[];
+    filter?: StagedLeadFilterParams;
+    mergeStrategy?: 'skip' | 'fill_missing';
+    dryRun?: boolean;
+  },
+): Promise<TransferPreview & { leadImportId?: string }> {
+  return apiFetch(`/staging/datasets/${id}/transfer`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** Direct-download export URL (token-authenticated so it bypasses the web proxy). */
+export async function getStagingExportUrl(
+  id: string,
+  format: 'csv' | 'xlsx',
+  filters: StagedLeadFilterParams = {},
+): Promise<string> {
+  const params = new URLSearchParams({ format });
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value);
+  }
+  if (API_ORIGIN) {
+    const { token } = await fetchUploadToken();
+    params.set('uploadToken', token);
+    return `${API_ORIGIN}/staging/datasets/${id}/export?${params}`;
+  }
+  return `${API_URL}/staging/datasets/${id}/export?${params}`;
+}
+
+export async function deleteStagingDataset(id: string): Promise<void> {
+  return apiFetch(`/staging/datasets/${id}`, { method: 'DELETE' });
 }

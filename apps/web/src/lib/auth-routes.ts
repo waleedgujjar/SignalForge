@@ -5,6 +5,7 @@ const PROTECTED_PREFIXES = [
   '/mailboxes',
   '/campaigns',
   '/leads',
+  '/large-leads',
   '/settings',
   '/analytics',
   '/automations',

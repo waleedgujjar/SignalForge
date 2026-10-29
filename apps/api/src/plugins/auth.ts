@@ -139,6 +139,41 @@ export function requireWorkspaceGuard() {
   };
 }
 
+/**
+ * Accepts either the normal session cookie OR a short-lived signed upload token
+ * sent as `Authorization: Bearer <token>`. Large uploads go directly to the API
+ * origin (bypassing the Vercel proxy), where the web app's session cookie does
+ * not exist; the token carries the same user/workspace identity.
+ */
+export function requireWorkspaceOrUploadToken() {
+  return {
+    preHandler: async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+      const header = request.headers.authorization;
+      const queryToken = (request.query as { uploadToken?: string } | undefined)?.uploadToken;
+      const bearer = header?.startsWith('Bearer ')
+        ? header.slice('Bearer '.length).trim()
+        : queryToken; // query form supports plain <a href> downloads
+      if (bearer) {
+        const { verifyUploadToken } = await import('../upload-token.js');
+        const payload = verifyUploadToken(bearer);
+        if (!payload) {
+          return reply.status(401).send({ error: 'Invalid or expired upload token' });
+        }
+        request.user = {
+          userId: payload.userId,
+          email: '',
+          name: null,
+          workspaceId: payload.workspaceId,
+          role: payload.role as MemberRole,
+          sessionId: '',
+        };
+        return;
+      }
+      await authenticateAndRequireWorkspace(request, reply);
+    },
+  };
+}
+
 export function requireWorkspaceRole(minimumRole: MemberRole) {
   return {
     preHandler: async (request: FastifyRequest, reply: FastifyReply) => {

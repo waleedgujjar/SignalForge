@@ -53,6 +53,8 @@ model Workspace {
   leadLists          LeadList[]
   integrations       IntegrationAccount[]
   leadImports        LeadImport[]
+  stagingDatasets    StagingDataset[]
+  stagedLeads        StagedLead[]
   websiteAnalyses    WebsiteAnalysis[]
   icpProfile         ICPProfile?
   leadEnrichments    LeadEnrichment[]
@@ -807,6 +809,96 @@ model LeadImportFile {
 
   @@unique([importId, sourceFileId])
   @@index([sourceFileId])
+}
+
+// ─── Large Lead Data (staging) ────────────────────────────────────────────────
+// A separate staging area for very large uploads: records are cleaned,
+// deduplicated and categorized here, then selectively transferred into Lead.
+
+enum StagedLeadStatus {
+  UNIQUE
+  DUPLICATE
+  REVIEW
+  INVALID
+}
+
+model StagingDataset {
+  id                String       @id @default(cuid())
+  workspaceId       String
+  name              String
+  sourceFileName    String
+  sourceFileSize    Int?
+  mimeType          String?
+  status            ImportStatus @default(PENDING)
+  initiatedByUserId String
+  totalRows         Int          @default(0)
+  stagedCount       Int          @default(0)
+  uniqueCount       Int          @default(0)
+  duplicateCount    Int          @default(0)
+  reviewCount       Int          @default(0)
+  invalidCount      Int          @default(0)
+  categorizedCount  Int          @default(0)
+  importedCount     Int          @default(0)
+  errorCount        Int          @default(0)
+  columnMappings    Json         @default("{}")
+  config            Json         @default("{}")
+  errorLog          Json         @default("[]")
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  leads     StagedLead[]
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, status])
+}
+
+model StagedLead {
+  id          String @id @default(cuid())
+  datasetId   String
+  workspaceId String
+
+  // Mapped source fields (original values preserved verbatim in rawData).
+  username String?
+  name     String?
+  bio      String?
+  category String?
+  website  String?
+  email    String?
+  phone    String?
+
+  // Normalized identifiers used for dedup and filtering.
+  normalizedEmail    String?
+  normalizedPhone    String?
+  websiteDomain      String?
+  normalizedUsername String?
+
+  status      StagedLeadStatus @default(UNIQUE)
+  duplicateOfId String?
+  dedupReason   String?
+
+  assignedCategory   String?
+  categoryConfidence Float?
+  categoryReason     String?
+
+  rawData   Json @default("{}")
+  sourceRow Int  @default(0)
+
+  importedLeadId String?
+  importedAt     DateTime?
+
+  createdAt DateTime @default(now())
+
+  dataset   StagingDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([datasetId, status])
+  @@index([datasetId, assignedCategory])
+  @@index([datasetId, normalizedEmail])
+  @@index([datasetId, createdAt])
+  @@index([workspaceId, normalizedEmail])
 }
 
 // ─── Suppression ──────────────────────────────────────────────────────────────

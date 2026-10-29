@@ -32,6 +32,8 @@ import { deliverabilityRoutes } from './routes/deliverability.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { automationsRoutes } from './routes/automations.js';
 import { smartImportRoutes } from './routes/smart-import.js';
+import { uploadRoutes } from './routes/uploads.js';
+import { stagingRoutes } from './routes/staging.js';
 import { unsubscribeRoutes } from './routes/unsubscribe.js';
 
 export async function buildApp() {
@@ -143,6 +145,8 @@ export async function buildApp() {
   await app.register(analyticsRoutes, { prefix: '/analytics' });
   await app.register(automationsRoutes, { prefix: '/automations' });
   await app.register(smartImportRoutes, { prefix: '/leads' });
+  await app.register(uploadRoutes, { prefix: '/uploads' });
+  await app.register(stagingRoutes, { prefix: '/staging' });
 
   const expensiveRateLimit = { max: 60, timeWindow: '1 minute' as const };
   await app.register(async (scope) => {

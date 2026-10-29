@@ -7,8 +7,10 @@ import {
   createWorker,
   registerWorkerShutdown,
   type LeadImportQueuePayload,
+  type LeadProcessingQueuePayload,
 } from '@signalforge/queue';
 import { processLeadImportJob } from './processor.js';
+import { processLeadProcessingJob } from './staging.js';
 
 function log(message: string, context: Record<string, unknown>): void {
   console.info(JSON.stringify({ worker: 'import-worker', message, ...context, timestamp: new Date().toISOString() }));
@@ -44,9 +46,31 @@ async function startWorker() {
 
   worker.on('stalled', (jobId) => log('Job stalled', { jobId }));
 
-  registerWorkerShutdown(worker);
+  // Large Lead Data staging pipeline (dataset processing + transfers to Leads).
+  const stagingWorker = createWorker<LeadProcessingQueuePayload>(
+    QUEUE_NAMES.LEAD_PROCESSING,
+    async (job) => {
+      log('Processing staging job', { jobId: job.id, kind: job.data.kind, datasetId: job.data.datasetId });
+      return processLeadProcessingJob(job.data);
+    },
+    connection,
+    { lockDuration: 600_000, concurrency: 1 },
+  );
 
-  log('Import worker ready', { status: 'ready', queues: [QUEUE_NAMES.LEAD_IMPORT] });
+  stagingWorker.on('completed', (job) => {
+    log('Staging job completed', { jobId: job.id, kind: job.data.kind, datasetId: job.data.datasetId });
+  });
+
+  stagingWorker.on('failed', (job, error) => {
+    log('Staging job failed', { jobId: job?.id, kind: job?.data.kind, datasetId: job?.data.datasetId, error: error.message });
+  });
+
+  registerWorkerShutdown([worker, stagingWorker]);
+
+  log('Import worker ready', {
+    status: 'ready',
+    queues: [QUEUE_NAMES.LEAD_IMPORT, QUEUE_NAMES.LEAD_PROCESSING],
+  });
 }
 
 void startWorker().catch((error) => {

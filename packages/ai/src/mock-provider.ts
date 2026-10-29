@@ -6,6 +6,8 @@ import type {
   DeliverabilityAnalysisInput,
   DeliverabilityAnalysisResult,
   EmailPersonalizationResult,
+  LeadCategorizationInput,
+  LeadCategorizationResult,
   LeadEnrichmentInput,
   LeadEnrichmentResult,
   LeadScoreResult,
@@ -135,6 +137,11 @@ function buildOpportunityAssessment(
 }
 
 export class MockAIProvider implements AIProvider {
+  async categorizeLeads(_input: LeadCategorizationInput): Promise<LeadCategorizationResult> {
+    // The mock never guesses categories; rule-based categorization already ran.
+    return { categories: [] };
+  }
+
   async scoreLead(input: { leadId: string; company?: string; title?: string }): Promise<LeadScoreResult> {
     const score = 60 + (hashString(input.leadId) % 41);
     const category =

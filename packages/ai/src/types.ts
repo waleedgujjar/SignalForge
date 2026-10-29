@@ -302,8 +302,25 @@ export interface LeadEnrichmentResult {
   opportunityAssessment?: OpportunityAssessment;
 }
 
+export interface LeadCategorizationInput {
+  leads: Array<{
+    id: string;
+    name?: string | null;
+    bio?: string | null;
+    username?: string | null;
+    website?: string | null;
+  }>;
+  /// Categories already in use, so the model prefers consistent labels.
+  knownCategories: string[];
+}
+
+export interface LeadCategorizationResult {
+  categories: Array<{ id: string; category: string; confidence: number }>;
+}
+
 export interface AIProvider {
   scoreLead(input: { leadId: string; company?: string; title?: string }): Promise<LeadScoreResult>;
+  categorizeLeads(input: LeadCategorizationInput): Promise<LeadCategorizationResult>;
   researchCompany(input: { domain: string }): Promise<CompanyResearchResult>;
   personalizeEmail(input: {
     leadId: string;

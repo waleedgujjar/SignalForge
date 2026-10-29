@@ -28,6 +28,7 @@ import {
   Plus,
   Sparkles,
   SearchCheck,
+  Database,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/components/auth-provider';
@@ -97,6 +98,7 @@ const navigation: NavSection[] = [
       { href: '/leads/tags', label: 'Tags', icon: Tag },
       { href: '/leads/lists', label: 'Lists', icon: ListChecks },
       { href: '/leads/import', label: 'Import', icon: Upload },
+      { href: '/large-leads', label: 'Large Lead Data', icon: Database },
       { href: '/website-intelligence', label: 'Website Intel', icon: Globe2 },
       { href: '/website-intelligence/studio', label: 'Analyze Website', icon: Globe2 },
     ],

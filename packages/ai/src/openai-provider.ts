@@ -8,6 +8,8 @@ import type {
   DeliverabilityAnalysisInput,
   DeliverabilityAnalysisResult,
   EmailPersonalizationResult,
+  LeadCategorizationInput,
+  LeadCategorizationResult,
   LeadEnrichmentInput,
   LeadEnrichmentResult,
   LeadScoreResult,
@@ -38,6 +40,15 @@ export class OpenAIProvider implements AIProvider {
       'You are a lead scoring assistant. Score the lead 0-100 and classify as HOT/WARM/COLD/UNQUALIFIED. Return JSON: {score, reasons: string[], category}.',
       `Score this lead: company=${input.company ?? 'unknown'}, title=${input.title ?? 'unknown'}`,
     );
+    return res;
+  }
+
+  async categorizeLeads(input: LeadCategorizationInput): Promise<LeadCategorizationResult> {
+    const res = await this.chat<LeadCategorizationResult>(
+      'You categorize business leads by industry. For each lead, pick the best business category from the known list when one fits, otherwise coin a concise 1-3 word category. If the evidence is too weak, use "Uncategorized" with confidence 0. Return JSON: {"categories":[{"id","category","confidence" (0-1)}]}. Never invent business facts.',
+      JSON.stringify({ knownCategories: input.knownCategories, leads: input.leads }),
+    );
+    if (!Array.isArray(res.categories)) return { categories: [] };
     return res;
   }
 

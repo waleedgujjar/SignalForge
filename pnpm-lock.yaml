@@ -759,6 +759,9 @@ importers:
       googleapis:
         specifier: ^148.0.0
         version: 148.0.0
+      xlsx:
+        specifier: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
+        version: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz
     devDependencies:
       '@signalforge/eslint-config':
         specifier: workspace:*
@@ -1379,6 +1382,9 @@ importers:
 
   workers/import-worker:
     dependencies:
+      '@signalforge/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       '@signalforge/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -6822,6 +6828,12 @@ packages:
     engines: {node: '>=0.8'}
     hasBin: true
 
+  xlsx@https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz:
+    resolution: {tarball: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz}
+    version: 0.20.3
+    engines: {node: '>=0.8'}
+    hasBin: true
+
   xml-name-validator@5.0.0:
     resolution: {integrity: sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==}
     engines: {node: '>=18'}
@@ -12129,6 +12141,8 @@ snapshots:
       ssf: 0.11.2
       wmf: 1.0.2
       word: 0.3.0
+
+  xlsx@https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz: {}
 
   xml-name-validator@5.0.0: {}
 

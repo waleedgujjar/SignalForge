@@ -14,9 +14,9 @@ describe('resolveImportMimeType', () => {
     expect(resolveImportMimeType(undefined, 'report.xlsx')).toBe(expected);
   });
 
-  it('resolves .xls to openxmlformats sheet type', () => {
-    const expected = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-    expect(resolveImportMimeType('application/vnd.ms-excel', 'old.xls')).toBe(expected);
+  it('resolves .xls to the legacy ms-excel type', () => {
+    expect(resolveImportMimeType('application/vnd.ms-excel', 'old.xls')).toBe('application/vnd.ms-excel');
+    expect(resolveImportMimeType('', 'old.xls')).toBe('application/vnd.ms-excel');
   });
 
   it('resolves text/csv mime type', () => {

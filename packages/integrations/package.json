@@ -23,7 +23,8 @@
     "@signalforge/shared": "workspace:*",
     "csv-parse": "^5.6.0",
     "exceljs": "^4.4.0",
-    "googleapis": "^148.0.0"
+    "googleapis": "^148.0.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@signalforge/eslint-config": "workspace:*",
