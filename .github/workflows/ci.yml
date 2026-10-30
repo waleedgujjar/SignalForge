@@ -10,6 +10,12 @@ jobs:
   quality:
     runs-on: ubuntu-latest
 
+    # turbo runs the (uncached) db:generate task as a dependency of lint/typecheck/
+    # test, and prisma.config.ts requires DATABASE_URL just to resolve (generate
+    # never connects), so expose a dummy URL to every step in this job.
+    env:
+      DATABASE_URL: postgresql://signalforge:signalforge@localhost:5432/signalforge
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
