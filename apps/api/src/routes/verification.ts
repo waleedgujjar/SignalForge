@@ -145,7 +145,7 @@ export const verificationRoutes: FastifyPluginAsync = async (app) => {
         : {}),
     };
 
-    const [data, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       prisma.emailVerificationHistory.findMany({
         where,
         orderBy: { checkedAt: 'desc' },
@@ -154,6 +154,30 @@ export const verificationRoutes: FastifyPluginAsync = async (app) => {
       }),
       prisma.emailVerificationHistory.count({ where }),
     ]);
+
+    // Merge associated lead company/contact where the history row is linked to a
+    // lead (the history model has no Lead relation, so look them up in one query).
+    const leadIds = [...new Set(rows.map((row) => row.leadId).filter((id): id is string => Boolean(id)))];
+    const leads = leadIds.length
+      ? await prisma.lead.findMany({
+          where: { workspaceId, id: { in: leadIds } },
+          select: { id: true, company: true, fullName: true, firstName: true, lastName: true },
+        })
+      : [];
+    const leadById = new Map(leads.map((lead) => [lead.id, lead]));
+
+    const data = rows.map((row) => {
+      const lead = row.leadId ? leadById.get(row.leadId) : undefined;
+      const contact = lead
+        ? lead.fullName ?? ([lead.firstName, lead.lastName].filter(Boolean).join(' ') || null)
+        : null;
+      return {
+        ...row,
+        source: row.jobId ? 'JOB' : 'SINGLE',
+        company: lead?.company ?? null,
+        contact: contact || null,
+      };
+    });
 
     return { data, total, page: query.page, limit: query.limit };
   });

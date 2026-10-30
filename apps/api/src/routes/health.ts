@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { checkDatabaseConnection } from '@signalforge/database';
-import { QUEUE_NAMES, checkRedisConnection, createQueue, createRedisConnection } from '@signalforge/queue';
+import { QUEUE_NAMES, checkRedisConnection } from '@signalforge/queue';
 import { checkAIHealth } from '@signalforge/ai';
 import { loadEnv } from '@signalforge/config';
 import {
@@ -8,6 +8,7 @@ import {
   healthResponseSchema,
 } from '@signalforge/validation';
 import { authenticateAndRequireWorkspace } from '../plugins/auth.js';
+import { getQueue } from '../queue-registry.js';
 
 const SERVICE_NAME = 'signalforge-api';
 const VERSION = '0.0.1';
@@ -52,23 +53,16 @@ export const healthRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get('/queues', { preHandler: authenticateAndRequireWorkspace }, async () => {
-    const env = loadEnv();
-    const connection = createRedisConnection(env.REDIS_URL);
     const queueNames = Object.values(QUEUE_NAMES);
-    const queues = queueNames.map((name) => createQueue(name, connection));
-
-    try {
-      const results: Record<string, Record<string, number>> = {};
-      await Promise.all(
-        queues.map(async (q, i) => {
-          const counts = await q.getJobCounts();
-          results[queueNames[i]!] = counts;
-        }),
-      );
-      return { status: 'ok', queues: results };
-    } finally {
-      await Promise.all(queues.map((q) => q.close()));
-    }
+    // Reuse the shared, long-lived queues (closed on app shutdown) instead of
+    // opening and closing a Redis connection per health poll.
+    const results: Record<string, Record<string, number>> = {};
+    await Promise.all(
+      queueNames.map(async (name) => {
+        results[name] = await getQueue(name).getJobCounts();
+      }),
+    );
+    return { status: 'ok', queues: results };
   });
 
   app.get('/ai', { preHandler: authenticateAndRequireWorkspace }, async () => {

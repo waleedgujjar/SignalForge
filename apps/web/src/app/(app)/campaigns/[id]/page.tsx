@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { CampaignValidationChecklist } from '@/components/campaigns/campaign-validation-checklist';
 import { CampaignSendingProgress } from '@/components/campaigns/campaign-sending-progress';
+import { CampaignRecipientOpens } from '@/components/campaigns/campaign-recipient-opens';
 import { StopCampaignDialog } from '@/components/campaigns/stop-campaign-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -169,7 +170,10 @@ export default function CampaignOverviewPage() {
         </Card>
 
         {['ACTIVE', 'SCHEDULED', 'PAUSED', 'COMPLETED', 'STOPPED'].includes(campaign.status) && (
-          <CampaignSendingProgress campaignId={params.id} />
+          <>
+            <CampaignSendingProgress campaignId={params.id} />
+            <CampaignRecipientOpens campaignId={params.id} />
+          </>
         )}
 
         {executionPlan && (

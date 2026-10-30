@@ -17,14 +17,12 @@ import {
 } from '@signalforge/integrations';
 import {
   QUEUE_NAMES,
-  createQueue,
-  createRedisConnection,
   enqueueLeadImport,
   ENRICHMENT_JOB_OPTIONS,
   type LeadImportQueuePayload,
 } from '@signalforge/queue';
-import { loadEnv } from '@signalforge/config';
 import { requireWorkspaceOrUploadToken, getWorkspaceId } from '../plugins/auth.js';
+import { getQueue } from '../queue-registry.js';
 import { isLinkedInResearchEnabled, leadResearchService } from '@signalforge/lead-research';
 import {
   processImportRows,
@@ -87,9 +85,7 @@ function validateMappings(raw: unknown): Record<string, string> | undefined {
 }
 
 function getEnrichmentQueue() {
-  const env = loadEnv();
-  const connection = createRedisConnection(env.REDIS_URL);
-  return createQueue(QUEUE_NAMES.LEAD_ENRICHMENT, connection);
+  return getQueue(QUEUE_NAMES.LEAD_ENRICHMENT);
 }
 
 async function parseUploadedFile(data: { toBuffer: () => Promise<Buffer>; filename: string; mimetype: string }) {
@@ -415,9 +411,7 @@ export const smartImportRoutes: FastifyPluginAsync = async (app) => {
     const effectiveMappings =
       mappings ?? ((imp.columnMappings as Record<string, string> | null) ?? undefined);
 
-    const env = loadEnv();
-    const connection = createRedisConnection(env.REDIS_URL);
-    const queue = createQueue<LeadImportQueuePayload>(QUEUE_NAMES.LEAD_IMPORT, connection);
+    const queue = getQueue<LeadImportQueuePayload>(QUEUE_NAMES.LEAD_IMPORT);
     await enqueueLeadImport(queue, {
       importId,
       workspaceId,

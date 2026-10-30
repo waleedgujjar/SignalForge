@@ -1,14 +1,15 @@
 'use client';
 
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { ShieldCheck, Upload, ClipboardList, Loader2, History } from 'lucide-react';
+import { ShieldCheck, Upload, ClipboardList, Loader2, History, Mail, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
   createVerificationBulkJob,
   fetchVerificationJobs,
+  fetchVerificationHistory,
   uploadVerificationExcel,
   verifyEmail,
 } from '@/lib/api';
@@ -19,6 +20,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { VerificationStatusBadge } from '@/components/verification/status-badge';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -35,22 +39,47 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+const RECENT_STATUSES = ['VERIFIED', 'RISKY', 'INVALID', 'UNKNOWN', 'DISPOSABLE', 'ROLE_BASED'];
+
 export default function VerifyEmailsPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [singleEmail, setSingleEmail] = useState('');
   const [bulkText, setBulkText] = useState('');
   const [singleResult, setSingleResult] = useState<Awaited<ReturnType<typeof verifyEmail>> | null>(null);
+  const [recentSearch, setRecentSearch] = useState('');
+  const [recentSearchInput, setRecentSearchInput] = useState('');
+  const [recentStatus, setRecentStatus] = useState('');
 
   const { data: jobs } = useQuery({
     queryKey: ['verification-jobs'],
     queryFn: () => fetchVerificationJobs({ limit: 10 }),
   });
 
+  // Workspace-wide recent verified emails (no jobId) — includes single checks,
+  // which never belong to a job, plus every email from bulk/Excel jobs.
+  const { data: recentEmails, isLoading: recentLoading } = useQuery({
+    queryKey: ['verification-recent-emails', recentStatus, recentSearch],
+    queryFn: () =>
+      fetchVerificationHistory({
+        limit: 25,
+        ...(recentStatus ? { status: recentStatus } : {}),
+        ...(recentSearch ? { search: recentSearch } : {}),
+      }),
+    refetchInterval: 10_000,
+  });
+
+  const refreshRecent = () => {
+    queryClient.invalidateQueries({ queryKey: ['verification-recent-emails'] });
+    queryClient.invalidateQueries({ queryKey: ['verification-jobs'] });
+  };
+
   const singleMutation = useMutation({
     mutationFn: () => verifyEmail(singleEmail),
     onSuccess: (result) => {
       setSingleResult(result);
       toast.success(`Verified: ${result.statusLabel ?? result.status}`);
+      refreshRecent();
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -204,6 +233,88 @@ export default function VerifyEmailsPage() {
                   </TableCell>
                 </TableRow>
               ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Mail className="h-4 w-4" /> Recent emails
+          </CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search email…"
+                className="w-[220px] pl-8"
+                value={recentSearchInput}
+                onChange={(event) => setRecentSearchInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') setRecentSearch(recentSearchInput.trim());
+                }}
+              />
+            </div>
+            <Select
+              value={recentStatus || 'ALL'}
+              onValueChange={(value) => setRecentStatus(value === 'ALL' ? '' : value)}
+            >
+              <SelectTrigger className="w-[150px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">All statuses</SelectItem>
+                {RECENT_STATUSES.map((status) => (
+                  <SelectItem key={status} value={status}>{status}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Email</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Company / Contact</TableHead>
+                <TableHead>Source</TableHead>
+                <TableHead>Verified</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {recentLoading ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-8 text-center">
+                    <Loader2 className="inline h-5 w-5 animate-spin text-muted-foreground" />
+                  </TableCell>
+                </TableRow>
+              ) : (recentEmails?.data ?? []).length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
+                    No verified emails yet. Verify a single email or upload a list to see results here.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                (recentEmails?.data ?? []).map((entry) => (
+                  <TableRow key={entry.id}>
+                    <TableCell className="font-medium">{entry.email}</TableCell>
+                    <TableCell><VerificationStatusBadge status={entry.status} /></TableCell>
+                    <TableCell className="text-sm">
+                      {entry.company || entry.contact ? (
+                        <span>{[entry.company, entry.contact].filter(Boolean).join(' · ')}</span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {entry.source === 'SINGLE' ? 'Single check' : entry.jobId ? 'Uploaded / bulk' : '—'}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {new Date(entry.checkedAt).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

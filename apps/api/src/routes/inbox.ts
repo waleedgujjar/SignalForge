@@ -18,13 +18,12 @@ import {
   createConversationNoteSchema,
   manualMatchConversationSchema,
 } from '@signalforge/validation';
-import { QUEUE_NAMES, createQueue, createRedisConnection, type InboxReplyQueuePayload } from '@signalforge/queue';
+import { QUEUE_NAMES, type InboxReplyQueuePayload } from '@signalforge/queue';
 import { getWorkspaceId, requireWorkspaceGuard } from '../plugins/auth.js';
+import { getQueue } from '../queue-registry.js';
 
 function getInboxReplyQueue() {
-  const env = loadEnv();
-  const connection = createRedisConnection(env.REDIS_URL);
-  return createQueue<InboxReplyQueuePayload>(QUEUE_NAMES.INBOX_REPLY, connection);
+  return getQueue<InboxReplyQueuePayload>(QUEUE_NAMES.INBOX_REPLY);
 }
 
 function handleError(error: unknown, reply: FastifyReply) {

@@ -1,5 +1,4 @@
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
-import { loadEnv } from '@signalforge/config';
 import { prisma } from '@signalforge/database';
 import type { Prisma } from '@signalforge/database';
 import { campaignLeadService } from '@signalforge/campaigns';
@@ -21,13 +20,12 @@ import { buildLeadImportMappingsRecord, detectLeadImportMappings, parseFileStrea
 import {
   QUEUE_NAMES,
   BULK_ENROLLMENT_THRESHOLD,
-  createQueue,
-  createRedisConnection,
   enqueueLeadDiscovery,
   enqueueCampaignEnrollment,
   type LeadDiscoveryQueuePayload,
   type CampaignEnrollmentQueuePayload,
 } from '@signalforge/queue';
+import { getQueue } from '../queue-registry.js';
 import {
   createDiscoveryJobSchema,
   discoveryExportQuerySchema,
@@ -43,9 +41,7 @@ import { Readable } from 'node:stream';
 import { getWorkspaceId, requireWorkspaceGuard, requireWorkspaceRole } from '../plugins/auth.js';
 
 function getDiscoveryQueue() {
-  const env = loadEnv();
-  const connection = createRedisConnection(env.REDIS_URL);
-  return createQueue<LeadDiscoveryQueuePayload>(QUEUE_NAMES.LEAD_DISCOVERY, connection);
+  return getQueue<LeadDiscoveryQueuePayload>(QUEUE_NAMES.LEAD_DISCOVERY);
 }
 
 /// Local error mapper, matching the per-route convention used across this API.
@@ -521,12 +517,7 @@ export const leadDiscoveryRoutes: FastifyPluginAsync = async (app) => {
       }
 
       if (promotion.leadIds.length > BULK_ENROLLMENT_THRESHOLD) {
-        const env = loadEnv();
-        const connection = createRedisConnection(env.REDIS_URL);
-        const queue = createQueue<CampaignEnrollmentQueuePayload>(
-          QUEUE_NAMES.CAMPAIGN_ENROLLMENT,
-          connection,
-        );
+        const queue = getQueue<CampaignEnrollmentQueuePayload>(QUEUE_NAMES.CAMPAIGN_ENROLLMENT);
         const job = await enqueueCampaignEnrollment(queue, {
           workspaceId,
           campaignId: campaign.id,

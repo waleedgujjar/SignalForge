@@ -36,9 +36,9 @@ if (rawApiOrigin && !API_ORIGIN && typeof window !== 'undefined') {
 const REQUEST_TIMEOUT_MS = 15_000;
 const UPLOAD_TOKEN_TIMEOUT_MS = 30_000;
 
-async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function apiFetch<T>(path: string, options: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   let response: Response;
   try {
@@ -1208,6 +1208,9 @@ export interface EmailVerificationHistoryEntry {
   checkedAt: string;
   jobId: string | null;
   leadId: string | null;
+  source?: 'JOB' | 'SINGLE';
+  company?: string | null;
+  contact?: string | null;
 }
 
 export async function createVerificationBulkJob(input: {
@@ -1265,7 +1268,10 @@ export async function uploadVerificationExcel(input: {
   emailColumn?: string;
   name?: string;
 }): Promise<{ jobId: string; status: string; total: number; emailColumn: string }> {
-  return apiFetch('/verification/excel', { method: 'POST', body: JSON.stringify(input) });
+  // Parsing the file and bulk-queuing its emails runs in the request, so give
+  // this a longer ceiling than a normal read. The server still returns as soon
+  // as the job is created and queued — verification itself runs in the worker.
+  return apiFetch('/verification/excel', { method: 'POST', body: JSON.stringify(input) }, 120_000);
 }
 
 export function verificationExportUrl(jobId: string): string {
@@ -1838,6 +1844,12 @@ export interface CampaignSendingStats {
   dailyLimit: number | null;
   sentToday: number;
   timezone: string;
+  opens?: {
+    uniqueRecipients: number;
+    totalRecorded: number;
+    notOpened: number;
+    openRate: number;
+  };
 }
 
 export async function fetchSendingJobs(query: SendingJobListQuery = {}): Promise<SendingJobListResponse> {
@@ -1872,6 +1884,30 @@ export async function cancelSendingJob(id: string): Promise<SendingJob> {
 
 export async function fetchCampaignSendingStats(campaignId: string): Promise<CampaignSendingStats> {
   return apiFetch(`/campaigns/${campaignId}/sending-stats`);
+}
+
+export interface CampaignRecipientRow {
+  id: string;
+  leadId: string;
+  status: string;
+  lead: { email: string; fullName: string | null; company: string | null };
+  tracking: {
+    sent: boolean;
+    opened: boolean;
+    totalOpens: number;
+    firstOpenedAt: string | null;
+    lastOpenedAt: string | null;
+  };
+}
+
+export async function fetchCampaignRecipients(
+  campaignId: string,
+  params: { page?: number; limit?: number } = {},
+): Promise<{ data: CampaignRecipientRow[]; total: number; page: number; limit: number; totalPages: number }> {
+  const query = new URLSearchParams();
+  if (params.page) query.set('page', String(params.page));
+  if (params.limit) query.set('limit', String(params.limit));
+  return apiFetch(`/campaigns/${campaignId}/leads?${query.toString()}`);
 }
 
 // ─── Module 10: SMTP Pools & Rotation ─────────────────────────────────────────
