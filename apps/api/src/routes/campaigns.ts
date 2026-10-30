@@ -20,12 +20,10 @@ import { publishWorkflowEvent } from '@signalforge/automations';
 import {
   QUEUE_NAMES,
   BULK_ENROLLMENT_THRESHOLD,
-  createQueue,
-  createRedisConnection,
   enqueueCampaignEnrollment,
   type CampaignEnrollmentQueuePayload,
 } from '@signalforge/queue';
-import { loadEnv } from '@signalforge/config';
+import { getQueue } from '../queue-registry.js';
 import {
   createCampaignSchema,
   updateCampaignSchema,
@@ -238,7 +236,60 @@ export const campaignRoutes: FastifyPluginAsync = async (app) => {
       prisma.campaignLead.count({ where: { campaignId: id } }),
     ]);
 
-    return { data: leads, total, page, limit, totalPages: Math.ceil(total / limit) };
+    // Per-recipient send + open summary, aggregated across this recipient's
+    // messages (a recipient can receive multiple sequence steps).
+    const campaignLeadIds = leads.map((cl) => cl.id);
+    const messages = campaignLeadIds.length
+      ? await prisma.emailMessage.findMany({
+          where: { campaignId: id, campaignLeadId: { in: campaignLeadIds } },
+          select: {
+            campaignLeadId: true,
+            status: true,
+            openCount: true,
+            firstOpenedAt: true,
+            lastOpenedAt: true,
+          },
+        })
+      : [];
+
+    const trackingByLead = new Map<
+      string,
+      { sent: boolean; totalOpens: number; firstOpenedAt: Date | null; lastOpenedAt: Date | null }
+    >();
+    for (const message of messages) {
+      if (!message.campaignLeadId) continue;
+      const agg = trackingByLead.get(message.campaignLeadId) ?? {
+        sent: false,
+        totalOpens: 0,
+        firstOpenedAt: null,
+        lastOpenedAt: null,
+      };
+      agg.totalOpens += message.openCount;
+      if (message.status === 'SENT') agg.sent = true;
+      if (message.firstOpenedAt && (!agg.firstOpenedAt || message.firstOpenedAt < agg.firstOpenedAt)) {
+        agg.firstOpenedAt = message.firstOpenedAt;
+      }
+      if (message.lastOpenedAt && (!agg.lastOpenedAt || message.lastOpenedAt > agg.lastOpenedAt)) {
+        agg.lastOpenedAt = message.lastOpenedAt;
+      }
+      trackingByLead.set(message.campaignLeadId, agg);
+    }
+
+    const data = leads.map((cl) => {
+      const agg = trackingByLead.get(cl.id);
+      return {
+        ...cl,
+        tracking: {
+          sent: agg?.sent ?? false,
+          opened: (agg?.totalOpens ?? 0) > 0,
+          totalOpens: agg?.totalOpens ?? 0,
+          firstOpenedAt: agg?.firstOpenedAt ?? null,
+          lastOpenedAt: agg?.lastOpenedAt ?? null,
+        },
+      };
+    });
+
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   });
 
   app.patch('/:id', async (request, reply) => {
@@ -311,12 +362,7 @@ export const campaignRoutes: FastifyPluginAsync = async (app) => {
 
     try {
       if (body.leadIds.length > BULK_ENROLLMENT_THRESHOLD) {
-        const env = loadEnv();
-        const connection = createRedisConnection(env.REDIS_URL);
-        const queue = createQueue<CampaignEnrollmentQueuePayload>(
-          QUEUE_NAMES.CAMPAIGN_ENROLLMENT,
-          connection,
-        );
+        const queue = getQueue<CampaignEnrollmentQueuePayload>(QUEUE_NAMES.CAMPAIGN_ENROLLMENT);
         const job = await enqueueCampaignEnrollment(queue, {
           workspaceId,
           campaignId: id,

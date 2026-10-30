@@ -72,6 +72,26 @@ export function CampaignSendingProgress({ campaignId }: Props) {
           </div>
           {data.dailyLimit && <Progress value={limitProgress} />}
         </div>
+
+        {data.opens && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">Recorded opens</span>
+              <span className="text-lg font-semibold tabular-nums">{data.opens.openRate.toFixed(1)}%</span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <MetricCard label="Recipients opened" value={data.opens.uniqueRecipients} />
+              <MetricCard label="Total recorded opens" value={data.opens.totalRecorded} />
+              <MetricCard label="Not opened" value={data.opens.notOpened} />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Open rate = unique recipients with a recorded open ÷ emails sent ({data.sent}). Opens are
+              tracked with a pixel and are approximate — image proxies (e.g. Gmail), scanners, and
+              privacy features like Apple Mail Privacy Protection can load or block the pixel, so some
+              opens may be automated and some real opens go uncounted.
+            </p>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

@@ -7,14 +7,12 @@ import {
   icpProfileSchema,
   serviceCatalogSchema,
 } from '@signalforge/validation';
-import { QUEUE_NAMES, createQueue, createRedisConnection, ENRICHMENT_JOB_OPTIONS } from '@signalforge/queue';
-import { loadEnv } from '@signalforge/config';
+import { QUEUE_NAMES, ENRICHMENT_JOB_OPTIONS } from '@signalforge/queue';
 import { requireWorkspaceGuard, getWorkspaceId } from '../plugins/auth.js';
+import { getQueue } from '../queue-registry.js';
 
 function getEnrichmentQueue() {
-  const env = loadEnv();
-  const connection = createRedisConnection(env.REDIS_URL);
-  return createQueue(QUEUE_NAMES.LEAD_ENRICHMENT, connection);
+  return getQueue(QUEUE_NAMES.LEAD_ENRICHMENT);
 }
 
 export const leadEnrichmentRoutes: FastifyPluginAsync = async (app) => {

@@ -1,7 +1,9 @@
 import { prisma, type EmailVerificationJobSource } from '@signalforge/database';
-import { enqueueEmailVerification } from '@signalforge/queue';
+import { enqueueEmailVerificationBatch } from '@signalforge/queue';
 
 import { getVerificationQueue } from './queue.js';
+
+const ENQUEUE_CHUNK_SIZE = 1000;
 
 export class VerificationJobService {
   async createJob(input: {
@@ -41,12 +43,15 @@ export class VerificationJobService {
     });
 
     const queue = getVerificationQueue();
-    for (const email of uniqueEmails) {
-      await enqueueEmailVerification(queue, {
-        jobId: job.id,
-        workspaceId: input.workspaceId,
-        email,
-      });
+    // Enqueue in bulk chunks (one Redis round trip each) rather than awaiting a
+    // per-email add, so a large upload returns quickly instead of blocking the
+    // request until every email is queued.
+    for (let i = 0; i < uniqueEmails.length; i += ENQUEUE_CHUNK_SIZE) {
+      const chunk = uniqueEmails.slice(i, i + ENQUEUE_CHUNK_SIZE);
+      await enqueueEmailVerificationBatch(
+        queue,
+        chunk.map((email) => ({ jobId: job.id, workspaceId: input.workspaceId, email })),
+      );
     }
 
     await prisma.emailVerificationJob.update({

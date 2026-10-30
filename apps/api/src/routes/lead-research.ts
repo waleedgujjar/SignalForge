@@ -4,11 +4,10 @@ import { loadEnv } from '@signalforge/config';
 import { publishWorkflowEvent } from '@signalforge/automations';
 import {
   QUEUE_NAMES,
-  createQueue,
-  createRedisConnection,
   enqueueLeadResearch,
   type LeadResearchQueuePayload,
 } from '@signalforge/queue';
+import { getQueue } from '../queue-registry.js';
 import {
   researchLeadSchema,
   approveResearchSchema,
@@ -50,9 +49,7 @@ const DISABLED_RESPONSE = { error: 'LinkedIn research is disabled' };
 const ATTENTION_STATUSES = ['MANUAL_REVIEW', 'PENDING', 'FAILED', 'UNAVAILABLE'] as const;
 
 function getResearchQueue() {
-  const env = loadEnv();
-  const connection = createRedisConnection(env.REDIS_URL);
-  return createQueue<LeadResearchQueuePayload>(QUEUE_NAMES.LEAD_RESEARCH, connection);
+  return getQueue<LeadResearchQueuePayload>(QUEUE_NAMES.LEAD_RESEARCH);
 }
 
 function handleResearchError(error: unknown, reply: FastifyReply) {

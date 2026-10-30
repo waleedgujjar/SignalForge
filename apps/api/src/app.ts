@@ -35,6 +35,8 @@ import { smartImportRoutes } from './routes/smart-import.js';
 import { uploadRoutes } from './routes/uploads.js';
 import { stagingRoutes } from './routes/staging.js';
 import { unsubscribeRoutes } from './routes/unsubscribe.js';
+import { trackingRoutes } from './routes/tracking.js';
+import { closeAllQueues } from './queue-registry.js';
 
 export async function buildApp() {
   const env = loadEnv();
@@ -117,6 +119,9 @@ export async function buildApp() {
 
   await app.register(healthRoutes, { prefix: '/health' });
   await app.register(unsubscribeRoutes, { prefix: '/unsubscribe' });
+  // Public (unauthenticated) email open-tracking pixel; recipients' mail clients
+  // load it directly, so no workspace guard.
+  await app.register(trackingRoutes, { prefix: '/tracking' });
 
   await app.register(
     async (authScope) => {
@@ -179,6 +184,11 @@ export async function buildApp() {
     status: 'ok',
     docs: '/health',
   }));
+
+  // Close shared BullMQ queues (and their Redis connections) on shutdown.
+  app.addHook('onClose', async () => {
+    await closeAllQueues();
+  });
 
   return app;
 }

@@ -49,3 +49,4 @@ export { evaluateSendingPolicy } from './sending-policy.js';
 export type { PolicyDecision, PolicyCheckInput, PolicyCheckResult } from './sending-policy.js';
 
 export { generateUnsubscribeToken, verifyUnsubscribeToken, buildUnsubscribeUrl } from './unsubscribe-token.js';
+export { generateOpenTrackingToken, verifyOpenTrackingToken, buildTrackingPixelUrl } from './open-tracking-token.js';

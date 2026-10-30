@@ -8,15 +8,13 @@ import {
   batchAnalyzeSchema,
   websiteAnalysisQuerySchema,
 } from '@signalforge/validation';
-import { QUEUE_NAMES, createQueue, createRedisConnection, WEBSITE_ANALYSIS_JOB_OPTIONS } from '@signalforge/queue';
-import { loadEnv } from '@signalforge/config';
+import { QUEUE_NAMES, WEBSITE_ANALYSIS_JOB_OPTIONS } from '@signalforge/queue';
 import { publishWorkflowEvent } from '@signalforge/automations';
 import { requireWorkspaceGuard, getWorkspaceId } from '../plugins/auth.js';
+import { getQueue } from '../queue-registry.js';
 
 function getAnalysisQueue() {
-  const env = loadEnv();
-  const connection = createRedisConnection(env.REDIS_URL);
-  return createQueue(QUEUE_NAMES.WEBSITE_ANALYSIS, connection);
+  return getQueue(QUEUE_NAMES.WEBSITE_ANALYSIS);
 }
 
 function isPrivateIPv4(ip: string): boolean {

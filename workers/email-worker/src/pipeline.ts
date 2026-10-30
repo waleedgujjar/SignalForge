@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { prisma, type SendingJob } from '@signalforge/database';
 import { loadEnv } from '@signalforge/config';
 import {
@@ -6,6 +7,7 @@ import {
   evaluateSendingPolicy,
   leadToVariableContext,
   buildUnsubscribeUrl,
+  buildTrackingPixelUrl,
   type VerificationResult,
 } from '@signalforge/email';
 import {
@@ -366,10 +368,21 @@ export async function processEmailSendJob(data: EmailSendJobData): Promise<Pipel
 
   try {
     const listUnsubscribeUrl = buildUnsubscribeUrl(env.API_URL, data.campaignId, data.leadId, env.SESSION_SECRET);
+
+    // Open tracking: an opaque per-email id drives the pixel URL. Build the HTML
+    // from the already-rendered body (after variable/spintax substitution) and
+    // append a 1x1 pixel, so the tracker is never scanned as a template token and
+    // the layout is unaffected. The plain-text part stays pixel-free.
+    const trackingId = randomUUID();
+    const renderedBody = policy.renderedBody ?? bodyTemplate;
+    const pixelUrl = buildTrackingPixelUrl(env.API_URL, trackingId, env.SESSION_SECRET);
+    const htmlBody = `${renderedBody.replace(/\n/g, '<br>')}<img src="${pixelUrl}" alt="" width="1" height="1" style="display:none;width:1px;height:1px;border:0;overflow:hidden" />`;
+
     const sendResult = await provider.send({
       to: lead.email,
       subject: policy.renderedSubject ?? subjectTemplate,
-      body: policy.renderedBody ?? bodyTemplate,
+      body: renderedBody,
+      html: htmlBody,
       listUnsubscribeUrl,
     });
 
@@ -393,6 +406,7 @@ export async function processEmailSendJob(data: EmailSendJobData): Promise<Pipel
           sentAt: new Date(),
           providerMessageId: sendResult.messageId,
           internetMessageId: internetMessageId ?? null,
+          trackingId,
         },
       });
       await tx.mailbox.update({

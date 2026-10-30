@@ -200,6 +200,7 @@ vi.mock('@signalforge/email', () => ({
   evaluateSendingPolicy: () => ({ decision: 'ALLOW_SEND', renderedSubject: 'Hi', renderedBody: 'Body' }),
   leadToVariableContext: () => ({}),
   buildUnsubscribeUrl: () => 'https://api.test/unsubscribe?token=test',
+  buildTrackingPixelUrl: () => 'https://api.test/tracking/open.gif?t=test',
 }));
 
 vi.mock('@signalforge/allocation', () => ({

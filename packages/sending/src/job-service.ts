@@ -693,6 +693,20 @@ export class SendingJobService {
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
     const pending = counts.PENDING + counts.SCHEDULED + counts.RETRYING + counts.PAUSED;
 
+    // Recorded email opens for this campaign. uniqueRecipients counts distinct
+    // leads with at least one OPENED event; totalRecorded counts every recorded
+    // open event (approximate — see tracking limitations).
+    const openAgg = await prisma.$queryRaw<{ unique_openers: bigint; total_opens: bigint }[]>`
+      SELECT COUNT(DISTINCT "leadId") AS unique_openers, COUNT(*) AS total_opens
+      FROM "EmailDeliveryEvent"
+      WHERE "workspaceId" = ${workspaceId}
+        AND "campaignId" = ${campaignId}
+        AND "eventType" = 'OPENED'::"DeliveryEventType"
+    `;
+    const uniqueOpeners = Number(openAgg[0]?.unique_openers ?? 0);
+    const totalOpens = Number(openAgg[0]?.total_opens ?? 0);
+    const openRate = counts.SENT > 0 ? Math.round((uniqueOpeners / counts.SENT) * 1000) / 10 : 0;
+
     return {
       counts,
       total,
@@ -703,6 +717,12 @@ export class SendingJobService {
       dailyLimit: campaign.dailySendingLimit,
       sentToday: usage?.sentCount ?? 0,
       timezone,
+      opens: {
+        uniqueRecipients: uniqueOpeners,
+        totalRecorded: totalOpens,
+        notOpened: Math.max(0, counts.SENT - uniqueOpeners),
+        openRate,
+      },
     };
   }
 }

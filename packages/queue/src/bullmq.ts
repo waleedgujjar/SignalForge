@@ -1,5 +1,7 @@
 import { Queue, Worker, type ConnectionOptions, type JobsOptions, type Processor, type WorkerOptions } from 'bullmq';
 
+export type { Queue } from 'bullmq';
+
 export function createQueue<TData = unknown>(
   name: string,
   connection: ConnectionOptions,

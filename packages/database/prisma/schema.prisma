@@ -1196,6 +1196,14 @@ model EmailMessage {
   references        Json?
   createdAt         DateTime           @default(now())
 
+  // Open tracking (pixel). trackingId is an opaque random id placed in the
+  // tracking-pixel URL (never a DB id or email); the open summary is maintained
+  // here for O(1) per-recipient reads, with individual opens in EmailDeliveryEvent.
+  trackingId        String?            @unique
+  openCount         Int                @default(0)
+  firstOpenedAt     DateTime?
+  lastOpenedAt      DateTime?
+
   campaign            Campaign?             @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   mailbox             Mailbox?              @relation(fields: [mailboxId], references: [id], onDelete: SetNull)
   conversationMessages ConversationMessage[]
@@ -1209,6 +1217,7 @@ model EmailMessage {
   @@index([workspaceId, sentAt])
   @@index([campaignId, jobId])
   @@index([leadId, sentAt])
+  @@index([campaignId, campaignLeadId])
 }
 
 enum EmailMessageStatus {
@@ -2083,12 +2092,14 @@ enum DeliveryEventType {
   COMPLAINT
   UNSUBSCRIBE
   REPLY
+  OPENED
 }
 
 enum DeliveryEventSource {
   SENDING
   INBOX
   SYSTEM
+  TRACKING
 }
 
 enum DeliverabilityProtectionLevel {

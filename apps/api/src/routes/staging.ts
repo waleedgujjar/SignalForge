@@ -21,13 +21,11 @@ import {
 } from '@signalforge/lead-discovery';
 import {
   QUEUE_NAMES,
-  createQueue,
-  createRedisConnection,
   enqueueLeadProcessing,
   type LeadProcessingQueuePayload,
 } from '@signalforge/queue';
-import { loadEnv } from '@signalforge/config';
 import { requireWorkspaceOrUploadToken, getWorkspaceId } from '../plugins/auth.js';
+import { getQueue } from '../queue-registry.js';
 
 const IMPORT_DIR = process.env.IMPORT_DATA_DIR ?? join(tmpdir(), 'signalforge-imports');
 const STAGING_DIR = () => join(IMPORT_DIR, 'staging');
@@ -70,9 +68,7 @@ function parseFilter(query: Record<string, unknown>): StagedLeadFilter {
 }
 
 function getProcessingQueue() {
-  const env = loadEnv();
-  const connection = createRedisConnection(env.REDIS_URL);
-  return createQueue<LeadProcessingQueuePayload>(QUEUE_NAMES.LEAD_PROCESSING, connection);
+  return getQueue<LeadProcessingQueuePayload>(QUEUE_NAMES.LEAD_PROCESSING);
 }
 
 async function findDataset(id: string, workspaceId: string) {

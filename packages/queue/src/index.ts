@@ -25,7 +25,7 @@ export const QUEUE_NAMES = {
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
 
 export { createRedisConnection, checkRedisConnection } from './redis.js';
-export { createQueue, createWorker, withJobTimeout, DEFAULT_JOB_OPTIONS, ENRICHMENT_JOB_OPTIONS, WEBSITE_ANALYSIS_JOB_OPTIONS, type CreateWorkerOpts } from './bullmq.js';
+export { createQueue, createWorker, withJobTimeout, DEFAULT_JOB_OPTIONS, ENRICHMENT_JOB_OPTIONS, WEBSITE_ANALYSIS_JOB_OPTIONS, type CreateWorkerOpts, type Queue } from './bullmq.js';
 export {
   enqueueEmailSend,
   enqueueEmailRetry,
@@ -77,6 +77,7 @@ export {
 } from './lead-discovery.js';
 export {
   enqueueEmailVerification,
+  enqueueEmailVerificationBatch,
   EMAIL_VERIFICATION_JOB_OPTIONS,
   type EmailVerificationQueuePayload,
 } from './email-verification.js';
