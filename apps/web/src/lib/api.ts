@@ -1,15 +1,40 @@
+/**
+ * Trim invisible junk that some tools inject into env values (notably a leading
+ * UTF-8 BOM when a value is piped into `vercel env add` from PowerShell stdin).
+ * Exported so a unit test can lock down the contract.
+ */
+// Pattern built from a string literal so no literal U+FEFF ever appears in
+// the source file (the ESLint no-irregular-whitespace rule would reject it).
+const ENV_TRIM_PATTERN = new RegExp('^[\\uFEFF\\s]+|[\\uFEFF\\s]+$', 'g');
+
+export function sanitizeEnv(value: string | undefined): string {
+  return (value ?? '').replace(ENV_TRIM_PATTERN, '');
+}
+
 /** Same-origin proxy (/api → API server) so session cookies work reliably in the browser. */
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '/api';
+const API_URL = sanitizeEnv(process.env.NEXT_PUBLIC_API_URL) || '/api';
 
 /**
  * Public API origin for LARGE requests (file uploads, big exports). The /api
  * proxy (Vercel rewrite) drops large bodies with a 502, so uploads go directly
  * to the API origin, authenticated with a short-lived upload token. Empty in
  * dev → everything stays on the same-origin proxy.
+ *
+ * Validated as a parseable absolute URL; a corrupt value (e.g. BOM-prefixed or
+ * missing a scheme) silently falls back to the same-origin proxy with a
+ * warning, so uploads degrade to proxy mode instead of 404-ing on a bogus path.
  */
-const API_ORIGIN = process.env.NEXT_PUBLIC_API_ORIGIN ?? '';
+const rawApiOrigin = sanitizeEnv(process.env.NEXT_PUBLIC_API_ORIGIN);
+const API_ORIGIN =
+  rawApiOrigin && URL.canParse(rawApiOrigin) ? rawApiOrigin.replace(/\/+$/, '') : '';
+if (rawApiOrigin && !API_ORIGIN && typeof window !== 'undefined') {
+  console.warn(
+    '[api] NEXT_PUBLIC_API_ORIGIN is not a valid absolute URL; uploads will use the same-origin proxy instead.',
+  );
+}
 
 const REQUEST_TIMEOUT_MS = 15_000;
+const UPLOAD_TOKEN_TIMEOUT_MS = 30_000;
 
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
@@ -933,8 +958,33 @@ export interface SmartImportResult {
   errors: SmartImportError[];
 }
 
+/**
+ * Short-lived HMAC upload token issued over the session cookie, used to auth
+ * direct-to-origin multipart uploads. Uses its own 30 s timeout rather than
+ * apiFetch's 15 s cap, because this call is the prerequisite of a user-visible
+ * upload and a cold Vercel edge can take 10-20 s to answer it. A timeout here
+ * would otherwise surface as "Request timed out" before the user's upload even
+ * begins.
+ */
 export async function fetchUploadToken(): Promise<{ token: string; expiresAt: string }> {
-  return apiFetch('/uploads/token', { method: 'POST' });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}/uploads/token`, {
+      method: 'POST',
+      credentials: 'include',
+      signal: AbortSignal.timeout(UPLOAD_TOKEN_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
+      throw new Error('Upload could not start: the server took too long to issue a token. Please try again.');
+    }
+    throw new Error('Unable to reach the server to prepare the upload. Please check your connection.');
+  }
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: `Request failed (${response.status})` }));
+    throw new Error(err.error ?? `HTTP ${response.status}`);
+  }
+  return response.json();
 }
 
 /**
