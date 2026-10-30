@@ -12,9 +12,35 @@ jobs:
 
     # turbo runs the (uncached) db:generate task as a dependency of lint/typecheck/
     # test, and prisma.config.ts requires DATABASE_URL just to resolve (generate
-    # never connects), so expose a dummy URL to every step in this job.
+    # never connects), so expose it to every step in this job. The test suite also
+    # includes @signalforge/database integration tests that hit a real Postgres.
     env:
       DATABASE_URL: postgresql://signalforge:signalforge@localhost:5432/signalforge
+      REDIS_URL: redis://localhost:6379
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: signalforge
+          POSTGRES_PASSWORD: signalforge
+          POSTGRES_DB: signalforge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U signalforge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Checkout
@@ -40,8 +66,10 @@ jobs:
 
       - name: Generate Prisma client
         run: pnpm db:generate
-        env:
-          DATABASE_URL: postgresql://signalforge:signalforge@localhost:5432/signalforge
+
+      - name: Apply migrations (for DB integration tests)
+        working-directory: packages/database
+        run: pnpm exec prisma migrate deploy
 
       - name: Lint
         run: pnpm lint
