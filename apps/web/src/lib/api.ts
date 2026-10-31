@@ -35,41 +35,81 @@ if (rawApiOrigin && !API_ORIGIN && typeof window !== 'undefined') {
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const UPLOAD_TOKEN_TIMEOUT_MS = 30_000;
+// The browser reaches the API through the Vercel /api rewrite, whose edge→origin
+// hop intermittently fails (502/503/504 or a dropped connection) even when the
+// API itself is healthy. Those failures happen before the request is processed,
+// so a short retry recovers transparently instead of surfacing "Request failed
+// (502)" to the user.
+const MAX_ATTEMPTS = 3;
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
+
+function isIdempotentMethod(method: string | undefined): boolean {
+  const m = (method ?? 'GET').toUpperCase();
+  return m === 'GET' || m === 'HEAD' || m === 'OPTIONS';
+}
+
+function retryDelay(attempt: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, attempt === 1 ? 300 : 800));
+}
 
 async function apiFetch<T>(path: string, options: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const method = (options.method ?? 'GET').toUpperCase();
+  let lastError = new Error('Unable to reach the server. Please check your connection and try again.');
 
-  let response: Response;
-  try {
-    response = await fetch(`${API_URL}${path}`, {
-      ...options,
-      credentials: 'include',
-      signal: controller.signal,
-      headers: {
-        ...(options.body != null ? { 'Content-Type': 'application/json' } : {}),
-        ...options.headers,
-      },
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Request timed out. Please check that the API is running and try again.');
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetch(`${API_URL}${path}`, {
+        ...options,
+        credentials: 'include',
+        signal: controller.signal,
+        headers: {
+          ...(options.body != null ? { 'Content-Type': 'application/json' } : {}),
+          ...options.headers,
+        },
+      });
+    } catch (error) {
+      clearTimeout(timeout);
+      const isAbort = error instanceof Error && error.name === 'AbortError';
+      lastError = new Error(
+        isAbort
+          ? 'Request timed out. Please check that the API is running and try again.'
+          : 'Unable to reach the server. Please check your connection and try again.',
+      );
+      // A dropped/refused connection never reached the app, so it is safe to
+      // retry for any method. A client-side timeout is only retried for reads.
+      if (attempt < MAX_ATTEMPTS && (!isAbort || isIdempotentMethod(method))) {
+        await retryDelay(attempt);
+        continue;
+      }
+      throw lastError;
     }
-    throw new Error('Unable to reach the server. Please check your connection and try again.');
-  } finally {
     clearTimeout(timeout);
-  }
 
-  if (!response.ok) {
-    if (response.status === 413) {
-      throw new Error('Import payload is too large. Try importing fewer rows at a time.');
+    // Transient gateway error from the edge proxy — the app did not process the
+    // request, so retry regardless of method.
+    if (RETRYABLE_STATUS.has(response.status) && attempt < MAX_ATTEMPTS) {
+      lastError = new Error(`Request failed (${response.status})`);
+      await retryDelay(attempt);
+      continue;
     }
-    const error = await response.json().catch(() => ({ error: `Request failed (${response.status})` }));
-    throw new Error(error.error ?? `HTTP ${response.status}`);
+
+    if (!response.ok) {
+      if (response.status === 413) {
+        throw new Error('Import payload is too large. Try importing fewer rows at a time.');
+      }
+      const error = await response.json().catch(() => ({ error: `Request failed (${response.status})` }));
+      throw new Error(error.error ?? `HTTP ${response.status}`);
+    }
+
+    if (response.status === 204) return undefined as T;
+    return response.json() as Promise<T>;
   }
 
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  throw lastError;
 }
 
 export interface HealthResponse {
@@ -397,31 +437,52 @@ export async function signup(data: {
 }
 
 export async function fetchSession(): Promise<SessionResponse | null> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  // Session check is idempotent, and a transient proxy failure here would wrongly
+  // bounce a logged-in user to /login — so it gets the same retry as apiFetch.
+  let lastError = new Error('Session check failed. Please refresh the page.');
 
-  try {
-    const response = await fetch(`${API_URL}/auth/session`, {
-      credentials: 'include',
-      cache: 'no-store',
-      signal: controller.signal,
-    });
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(`${API_URL}/auth/session`, {
+        credentials: 'include',
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+    } catch (error) {
+      clearTimeout(timeout);
+      lastError =
+        error instanceof Error && error.name === 'AbortError'
+          ? new Error('Session check timed out. Please refresh the page.')
+          : new Error('Unable to reach the server. Please check your connection and try again.');
+      if (attempt < MAX_ATTEMPTS) {
+        await retryDelay(attempt);
+        continue;
+      }
+      throw lastError;
+    }
+    clearTimeout(timeout);
 
     if (response.status === 401) return null;
+
+    if (RETRYABLE_STATUS.has(response.status) && attempt < MAX_ATTEMPTS) {
+      lastError = new Error(`Request failed (${response.status})`);
+      await retryDelay(attempt);
+      continue;
+    }
+
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: `Request failed (${response.status})` }));
       throw new Error(error.error ?? `HTTP ${response.status}`);
     }
 
     return response.json() as Promise<SessionResponse>;
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Session check timed out. Please refresh the page.');
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  throw lastError;
 }
 
 export async function logout(): Promise<void> {
