@@ -364,6 +364,10 @@ services:
     restart: unless-stopped
     command: ['node', 'workers/lead-discovery-worker/dist/index.js']
     env_file: [.env.production]
+    environment:
+      # Keep V8's heap inside the container limit: by default it sizes the heap
+      # from host memory and gets OOM-killed by the cgroup before ever GC'ing.
+      NODE_OPTIONS: --max-old-space-size=192
     depends_on:
       postgres:
         condition: service_healthy
@@ -374,7 +378,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: 256M
 
   lead-research-worker:
     profiles: [deferred]
