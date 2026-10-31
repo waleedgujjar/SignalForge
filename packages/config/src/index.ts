@@ -24,6 +24,11 @@ export const envSchema = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   APP_URL: z.string().url(),
   API_URL: z.string().url(),
+  // Extra browser origins allowed by CORS beyond APP_URL (comma-separated).
+  // Lets the app be served from an additional host (e.g. app.websiterankerrs.tech,
+  // which calls the API directly instead of through the Vercel /api rewrite)
+  // without changing APP_URL, which also builds email/reset links.
+  CORS_EXTRA_ORIGINS: z.preprocess(emptyToUndefined, z.string().optional()),
   WEB_PORT: z.coerce.number().int().positive().default(3000),
   API_PORT: z.coerce.number().int().positive().default(4000),
   DATABASE_URL: z.string().min(1),

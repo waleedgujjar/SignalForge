@@ -33,6 +33,32 @@ if (rawApiOrigin && !API_ORIGIN && typeof window !== 'undefined') {
   );
 }
 
+/**
+ * API base for ordinary browser requests. When the app is served from the same
+ * registrable domain as the API (e.g. app.websiterankerrs.tech ↔
+ * api.websiterankerrs.tech), call the API directly and skip the Vercel `/api`
+ * rewrite — that edge→origin hop is the one that intermittently 502s. The
+ * session cookie is host-only on the API host and SameSite=Lax, so it is still
+ * sent on these same-site cross-subdomain requests (first-party, not a
+ * third-party cookie). On any other host (e.g. the *.vercel.app deployment) keep
+ * the same-origin `/api` proxy so the cookie stays first-party to that origin.
+ */
+function apiBase(): string {
+  if (typeof window !== 'undefined' && API_ORIGIN) {
+    try {
+      const apiHost = new URL(API_ORIGIN).hostname;
+      const registrable = apiHost.split('.').slice(-2).join('.');
+      const host = window.location.hostname;
+      if (host === registrable || host.endsWith(`.${registrable}`)) {
+        return API_ORIGIN;
+      }
+    } catch {
+      // Malformed origin — fall through to the same-origin proxy.
+    }
+  }
+  return API_URL;
+}
+
 const REQUEST_TIMEOUT_MS = 15_000;
 const UPLOAD_TOKEN_TIMEOUT_MS = 30_000;
 // The browser reaches the API through the Vercel /api rewrite, whose edge→origin
@@ -62,7 +88,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, timeoutMs = 
 
     let response: Response;
     try {
-      response = await fetch(`${API_URL}${path}`, {
+      response = await fetch(`${apiBase()}${path}`, {
         ...options,
         credentials: 'include',
         signal: controller.signal,
@@ -447,7 +473,7 @@ export async function fetchSession(): Promise<SessionResponse | null> {
 
     let response: Response;
     try {
-      response = await fetch(`${API_URL}/auth/session`, {
+      response = await fetch(`${apiBase()}/auth/session`, {
         credentials: 'include',
         cache: 'no-store',
         signal: controller.signal,
@@ -1030,7 +1056,7 @@ export interface SmartImportResult {
 export async function fetchUploadToken(): Promise<{ token: string; expiresAt: string }> {
   let response: Response;
   try {
-    response = await fetch(`${API_URL}/uploads/token`, {
+    response = await fetch(`${apiBase()}/uploads/token`, {
       method: 'POST',
       credentials: 'include',
       signal: AbortSignal.timeout(UPLOAD_TOKEN_TIMEOUT_MS),
@@ -1144,7 +1170,7 @@ export async function smartImportLeads(
 }
 
 export function getExportUrl(params?: Record<string, string>): string {
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? '/api';
+  const API_BASE = apiBase();
   const query = params ? `?${new URLSearchParams(params)}` : '';
   return `${API_BASE}/leads/export${query}`;
 }
@@ -1336,7 +1362,7 @@ export async function uploadVerificationExcel(input: {
 }
 
 export function verificationExportUrl(jobId: string): string {
-  return `${API_URL}/verification/export/${jobId}`;
+  return `${apiBase()}/verification/export/${jobId}`;
 }
 
 // Workspace settings
@@ -3052,7 +3078,7 @@ export async function downloadDeliverabilityExport(
   period: DeliverabilityPeriod,
 ): Promise<{ filename: string; csv: string }> {
   const response = await fetch(
-    `${API_URL}/deliverability/export?entity=${entity}&period=${period}`,
+    `${apiBase()}/deliverability/export?entity=${entity}&period=${period}`,
     { credentials: 'include' },
   );
 
@@ -3513,7 +3539,7 @@ export async function downloadAnalyticsExport(
   query: AnalyticsQuery,
 ): Promise<{ filename: string; csv: string }> {
   const response = await fetch(
-    `${API_URL}/analytics/export?entity=${entity}&${analyticsQueryString(query)}`,
+    `${apiBase()}/analytics/export?entity=${entity}&${analyticsQueryString(query)}`,
     { credentials: 'include' },
   );
 
@@ -3877,7 +3903,7 @@ export async function previewDiscoveryImport(data: {
 export function discoveryExportUrl(id: string, format: 'csv' | 'xlsx', qualifiedOnly?: boolean): string {
   const params = new URLSearchParams({ format });
   if (qualifiedOnly) params.set('qualified', 'true');
-  return `${API_URL}/lead-discovery/jobs/${id}/export?${params}`;
+  return `${apiBase()}/lead-discovery/jobs/${id}/export?${params}`;
 }
 
 export async function fetchDiscoveryActivity(

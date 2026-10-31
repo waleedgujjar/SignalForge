@@ -57,6 +57,10 @@ export async function buildApp() {
   await app.register(cors, {
     origin: (origin, callback) => {
       const allowed = new Set([env.APP_URL]);
+      for (const extra of (env.CORS_EXTRA_ORIGINS ?? '').split(',')) {
+        const trimmed = extra.trim();
+        if (trimmed) allowed.add(trimmed);
+      }
       if (env.NODE_ENV !== 'production') {
         allowed.add('http://localhost:3000');
         allowed.add('http://127.0.0.1:3000');
