@@ -65,7 +65,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     });
 
     const session = await createUserSession(user.id);
-    setSessionCookie(reply, session.rawToken, env.NODE_ENV === 'production');
+    setSessionCookie(reply, session.rawToken, env.NODE_ENV === 'production', request);
 
     const payload = await buildSessionResponse(user.id, session.rawToken);
     return sessionResponseSchema.parse(payload);
@@ -86,7 +86,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     const activeWorkspaceId = user.memberships[0]?.workspaceId;
     const session = await createUserSession(user.id, activeWorkspaceId);
-    setSessionCookie(reply, session.rawToken, env.NODE_ENV === 'production');
+    setSessionCookie(reply, session.rawToken, env.NODE_ENV === 'production', request);
 
     const payload = await buildSessionResponse(user.id, session.rawToken);
     return sessionResponseSchema.parse(payload);
