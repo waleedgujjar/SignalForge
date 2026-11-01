@@ -1,65 +1,61 @@
+import { lookup } from './dns-resolver.js';
 import { isBlockedHostname, resolveSafeAddresses } from './network-guard.js';
 import type { MxRecord } from './types.js';
-
-const DNS_TIMEOUT_MS = 5000;
 
 export interface MxVerificationResult {
   mxFound: boolean;
   mxRecords: MxRecord[];
-  mxStatus: 'VALID' | 'NONE' | 'ERROR' | 'TIMEOUT';
+  mxStatus: 'VALID' | 'NONE' | 'NULL_MX' | 'ERROR' | 'TIMEOUT';
+  /** Mail hosts in priority order (MX exchanges, or the domain itself as the RFC 5321 implicit MX). */
+  mailServers: string[];
+  /** First entry of mailServers, kept for existing callers. */
   mailServer: string | null;
 }
 
 export async function verifyMx(domain: string): Promise<MxVerificationResult> {
   if (!domain || isBlockedHostname(domain)) {
-    return { mxFound: false, mxRecords: [], mxStatus: 'NONE', mailServer: null };
+    return none('NONE');
   }
 
-  const { promises: dns } = await import('node:dns');
-  try {
-    const records = await withTimeout(dns.resolveMx(domain), DNS_TIMEOUT_MS);
-    if (records.length > 0) {
-      const mxRecords = records
-        .map((r) => ({ exchange: r.exchange.toLowerCase(), priority: r.priority }))
-        .sort((a, b) => a.priority - b.priority);
-      return {
-        mxFound: true,
-        mxRecords,
-        mxStatus: 'VALID',
-        mailServer: mxRecords[0]?.exchange ?? null,
-      };
+  const mx = await lookup((r) => r.resolveMx(domain));
+
+  if (mx.kind === 'ok' && mx.value.length > 0) {
+    const mxRecords = mx.value
+      .map((r) => ({ exchange: r.exchange.toLowerCase().replace(/\.$/, ''), priority: r.priority }))
+      .sort((a, b) => a.priority - b.priority);
+
+    // RFC 7505 null MX ("MX 0 .") means the domain explicitly accepts no mail.
+    if (mxRecords.length === 1 && mxRecords[0]!.exchange === '') {
+      return { ...none('NULL_MX'), mxRecords };
     }
 
-    // RFC 5321 fallback: A/AAAA record
-    const safeIps = await resolveSafeAddresses(domain);
-    if (safeIps.length > 0) {
-      return {
-        mxFound: true,
-        mxRecords: [{ exchange: domain, priority: 0 }],
-        mxStatus: 'VALID',
-        mailServer: domain,
-      };
-    }
-
-    return { mxFound: false, mxRecords: [], mxStatus: 'NONE', mailServer: null };
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ETIMEOUT') {
-      return { mxFound: false, mxRecords: [], mxStatus: 'TIMEOUT', mailServer: null };
-    }
-    return { mxFound: false, mxRecords: [], mxStatus: 'ERROR', mailServer: null };
+    const mailServers = mxRecords.map((r) => r.exchange).filter((h) => h && !isBlockedHostname(h));
+    return {
+      mxFound: mailServers.length > 0,
+      mxRecords,
+      mxStatus: mailServers.length > 0 ? 'VALID' : 'NONE',
+      mailServers,
+      mailServer: mailServers[0] ?? null,
+    };
   }
+
+  if (mx.kind === 'timeout') return none('TIMEOUT');
+  if (mx.kind === 'error') return none('ERROR');
+
+  // No MX records: RFC 5321 section 5.1 falls back to the domain's A record.
+  const safeIps = await resolveSafeAddresses(domain);
+  if (safeIps.length > 0) {
+    return {
+      mxFound: true,
+      mxRecords: [{ exchange: domain, priority: 0 }],
+      mxStatus: 'VALID',
+      mailServers: [domain],
+      mailServer: domain,
+    };
+  }
+  return none('NONE');
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => {
-        const err = new Error('DNS timeout') as NodeJS.ErrnoException;
-        err.code = 'ETIMEOUT';
-        reject(err);
-      }, ms),
-    ),
-  ]);
+function none(mxStatus: MxVerificationResult['mxStatus']): MxVerificationResult {
+  return { mxFound: false, mxRecords: [], mxStatus, mailServers: [], mailServer: null };
 }

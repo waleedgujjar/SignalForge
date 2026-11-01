@@ -7,6 +7,7 @@ export interface CampaignEnrollmentQueuePayload {
   leadIds: string[];
   actorUserId?: string;
   force?: boolean;
+  approvedLeadIds?: string[];
   source?: 'api' | 'discovery';
   discoveryJobId?: string;
   discoveredLeadIds?: string[];

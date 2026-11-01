@@ -4,16 +4,19 @@ export type VerificationStatus =
   | 'INVALID'
   | 'UNKNOWN'
   | 'DISPOSABLE'
-  | 'ROLE_BASED';
+  | 'ROLE_BASED'
+  | 'CATCH_ALL';
 
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'VERY_HIGH';
 export type ProviderType = 'FREE' | 'BUSINESS' | 'UNKNOWN';
 export type SmtpInternalStatus =
   | 'ACCEPTED'
   | 'REJECTED'
+  | 'MAILBOX_FULL'
   | 'TEMPORARY_FAILURE'
   | 'BLOCKED'
   | 'TIMEOUT'
+  | 'UNAVAILABLE'
   | 'UNKNOWN'
   | 'SKIPPED';
 
@@ -30,6 +33,15 @@ export type VerificationMethod = 'LOCAL' | 'DNS' | 'MX' | 'SMTP' | 'COMBINED' | 
 export interface MxRecord {
   exchange: string;
   priority: number;
+}
+
+export type VerificationCheckOutcome = 'pass' | 'fail' | 'warn' | 'skip';
+
+/** One line of the human-readable explanation shown with a result. */
+export interface VerificationCheck {
+  check: 'syntax' | 'disposable' | 'role' | 'domain' | 'mx' | 'smtp' | 'catch_all';
+  outcome: VerificationCheckOutcome;
+  detail: string;
 }
 
 export interface VerificationResult {
@@ -58,6 +70,10 @@ export interface VerificationResult {
   providerType: ProviderType;
   verificationMethod: VerificationMethod;
   riskFactors: string[];
+  /** Ordered evidence explaining the verdict. */
+  checks: VerificationCheck[];
+  /** Raw SMTP reply that produced the verdict, when one was received. */
+  smtpResponse: string | null;
   verificationVersion: string;
 }
 

@@ -385,6 +385,8 @@ export const campaignListQuerySchema = z.object({
 export const enrollCampaignLeadsSchema = z.object({
   leadIds: z.array(z.string()).min(1).max(500),
   force: z.boolean().default(false),
+  /** Leads the user reviewed and approved despite a risky/unknown/catch-all/role result. */
+  approvedLeadIds: z.array(z.string()).max(500).optional(),
 });
 
 export const previewEligibilitySchema = z.object({
@@ -493,7 +495,19 @@ export const leadListQuerySchema = z.object({
   state: z.string().optional(),
   city: z.string().optional(),
   verificationStatus: z
-    .enum(['VERIFIED', 'RISKY', 'INVALID', 'UNKNOWN', 'DISPOSABLE', 'ROLE_BASED'])
+    .enum([
+      'VERIFIED',
+      'RISKY',
+      'INVALID',
+      'UNKNOWN',
+      'DISPOSABLE',
+      'ROLE_BASED',
+      'CATCH_ALL',
+      /** No verification result yet. */
+      'UNVERIFIED',
+      /** No result, or one too old / from an older engine to trust. */
+      'NEEDS_VERIFICATION',
+    ])
     .optional(),
   campaignId: z.string().optional(),
   tagId: z.string().optional(),
@@ -590,7 +604,7 @@ export const verificationJobListQuerySchema = z.object({
 export const verificationHistoryQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(25),
-  status: z.enum(['VERIFIED', 'RISKY', 'INVALID', 'UNKNOWN', 'DISPOSABLE', 'ROLE_BASED']).optional(),
+  status: z.enum(['VERIFIED', 'RISKY', 'INVALID', 'UNKNOWN', 'DISPOSABLE', 'ROLE_BASED', 'CATCH_ALL']).optional(),
   jobId: z.string().optional(),
   search: z.string().optional(),
 });

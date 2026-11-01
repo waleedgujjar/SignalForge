@@ -5,12 +5,13 @@ import { verifyMx } from './mx-verifier.js';
 import { getDefaultDisposableProvider } from './disposable-provider.js';
 import { detectRoleEmail } from './role-detector.js';
 import { detectProviderType } from './provider-detector.js';
-import { verifySmtpRecipient, detectCatchAll } from './smtp-verifier.js';
+import { verifySmtpRecipient, isSmtpUnavailable, type SmtpVerifyResult } from './smtp-verifier.js';
 import { scoreRisk } from './risk-scorer.js';
 import { scoreConfidence } from './confidence-scorer.js';
 import { reasonMessage } from './reason-codes.js';
 import {
   loadVerificationConfig,
+  type VerificationCheck,
   type VerificationResult,
   type VerifyEmailOptions,
   type VerificationStatus,
@@ -18,252 +19,20 @@ import {
   type VerificationMethod,
 } from './types.js';
 
+export const VERIFICATION_VERSION = 'v2';
+
 const catchAllCache = new Map<string, { isCatchAll: boolean; expiresAt: number }>();
 const CATCH_ALL_TTL_MS = 24 * 60 * 60 * 1000;
 
-export class EmailVerificationEngine {
-  async verify(rawEmail: string, options: VerifyEmailOptions = {}): Promise<VerificationResult> {
-    const config = loadVerificationConfig();
-    const normalized = normalizeEmail(rawEmail);
-
-    if (!normalized.valid) {
-      return buildResult({
-        normalized,
-        status: 'INVALID',
-        reasonCode: 'INVALID_SYNTAX',
-        syntaxValid: false,
-        domainValid: false,
-        dnsResolved: false,
-        mxFound: false,
-        mxRecords: [],
-        mxStatus: 'NONE',
-        smtpStatus: 'SKIPPED',
-        isDisposable: false,
-        isRole: false,
-        roleType: null,
-        isCatchAll: false,
-        providerType: 'UNKNOWN',
-        verificationMethod: 'LOCAL',
-      });
-    }
-
-    const syntax = validateSyntax(normalized.normalizedEmail, normalized.localPart, normalized.domain);
-    if (!syntax.valid) {
-      return buildResult({
-        normalized,
-        status: 'INVALID',
-        reasonCode: syntax.reasonCode,
-        syntaxValid: false,
-        domainValid: false,
-        dnsResolved: false,
-        mxFound: false,
-        mxRecords: [],
-        mxStatus: 'NONE',
-        smtpStatus: 'SKIPPED',
-        isDisposable: false,
-        isRole: false,
-        roleType: null,
-        isCatchAll: false,
-        providerType: detectProviderType(normalized.domain),
-        verificationMethod: 'LOCAL',
-      });
-    }
-
-    const disposableProvider = getDefaultDisposableProvider();
-    const isDisposable = disposableProvider.isDisposable(normalized.domain);
-    if (isDisposable) {
-      return buildResult({
-        normalized,
-        status: 'DISPOSABLE',
-        reasonCode: 'DISPOSABLE_DOMAIN',
-        syntaxValid: true,
-        domainValid: true,
-        dnsResolved: false,
-        mxFound: false,
-        mxRecords: [],
-        mxStatus: 'UNKNOWN',
-        smtpStatus: 'SKIPPED',
-        isDisposable: true,
-        isRole: false,
-        roleType: null,
-        isCatchAll: false,
-        providerType: detectProviderType(normalized.domain),
-        verificationMethod: 'LOCAL',
-      });
-    }
-
-    const role = detectRoleEmail(normalized.localPart);
-    const providerType = detectProviderType(normalized.domain);
-
-    const domainResult = await validateDomain(normalized.domain);
-    if (domainResult.result === 'DOMAIN_NOT_FOUND' || domainResult.result === 'DOMAIN_INVALID') {
-      return buildResult({
-        normalized,
-        status: 'INVALID',
-        reasonCode: 'INVALID_DOMAIN',
-        syntaxValid: true,
-        domainValid: false,
-        dnsResolved: false,
-        mxFound: false,
-        mxRecords: [],
-        mxStatus: 'NONE',
-        smtpStatus: 'SKIPPED',
-        isDisposable: false,
-        isRole: role.isRole,
-        roleType: role.roleType,
-        isCatchAll: false,
-        providerType,
-        verificationMethod: 'DNS',
-      });
-    }
-
-    if (domainResult.result === 'DNS_TIMEOUT' || domainResult.result === 'DNS_ERROR') {
-      return buildResult({
-        normalized,
-        status: 'UNKNOWN',
-        reasonCode: domainResult.result === 'DNS_TIMEOUT' ? 'DNS_TIMEOUT' : 'DNS_FAILURE',
-        syntaxValid: true,
-        domainValid: false,
-        dnsResolved: false,
-        mxFound: false,
-        mxRecords: [],
-        mxStatus: 'ERROR',
-        smtpStatus: 'SKIPPED',
-        isDisposable: false,
-        isRole: role.isRole,
-        roleType: role.roleType,
-        isCatchAll: false,
-        providerType,
-        verificationMethod: 'DNS',
-      });
-    }
-
-    const mx = await verifyMx(normalized.domain);
-    if (!mx.mxFound) {
-      return buildResult({
-        normalized,
-        status: 'INVALID',
-        reasonCode: 'NO_MX',
-        syntaxValid: true,
-        domainValid: true,
-        dnsResolved: domainResult.dnsResolved,
-        mxFound: false,
-        mxRecords: [],
-        mxStatus: mx.mxStatus,
-        smtpStatus: 'SKIPPED',
-        isDisposable: false,
-        isRole: role.isRole,
-        roleType: role.roleType,
-        isCatchAll: false,
-        providerType,
-        verificationMethod: 'MX',
-      });
-    }
-
-    if (mx.mxStatus === 'TIMEOUT' || mx.mxStatus === 'ERROR') {
-      return buildResult({
-        normalized,
-        status: 'UNKNOWN',
-        reasonCode: mx.mxStatus === 'TIMEOUT' ? 'DNS_TIMEOUT' : 'DNS_FAILURE',
-        syntaxValid: true,
-        domainValid: true,
-        dnsResolved: domainResult.dnsResolved,
-        mxFound: false,
-        mxRecords: mx.mxRecords,
-        mxStatus: mx.mxStatus,
-        smtpStatus: 'SKIPPED',
-        isDisposable: false,
-        isRole: role.isRole,
-        roleType: role.roleType,
-        isCatchAll: false,
-        providerType,
-        verificationMethod: 'MX',
-      });
-    }
-
-    let smtpStatus: SmtpInternalStatus = 'SKIPPED';
-    let isCatchAll = false;
-    const smtpEnabled = options.smtpEnabled ?? config.smtpEnabled;
-
-    if (smtpEnabled && mx.mailServer) {
-      const smtpResult = await verifySmtpRecipient(normalized.normalizedEmail, mx.mailServer, {
-        timeoutMs: config.smtpTimeoutMs,
-      });
-      smtpStatus = smtpResult.status;
-
-      if (options.catchAllEnabled !== false) {
-        isCatchAll = await getCatchAllCached(normalized.domain, mx.mailServer, config.smtpTimeoutMs);
-      }
-    }
-
-    let status: VerificationStatus;
-    let reasonCode: string;
-
-    if (role.isRole) {
-      status = 'ROLE_BASED';
-      reasonCode = 'ROLE_EMAIL';
-    } else if (isCatchAll) {
-      status = 'RISKY';
-      reasonCode = 'CATCH_ALL_DOMAIN';
-    } else if (smtpStatus === 'REJECTED') {
-      status = 'INVALID';
-      reasonCode = 'SMTP_REJECTED';
-    } else if (smtpStatus === 'TIMEOUT') {
-      status = 'UNKNOWN';
-      reasonCode = 'SMTP_TIMEOUT';
-    } else if (smtpStatus === 'BLOCKED') {
-      status = 'UNKNOWN';
-      reasonCode = 'SMTP_BLOCKED';
-    } else if (smtpStatus === 'TEMPORARY_FAILURE') {
-      status = 'UNKNOWN';
-      reasonCode = 'SMTP_TEMPORARY_FAILURE';
-    } else if (smtpStatus === 'ACCEPTED') {
-      status = 'VERIFIED';
-      reasonCode = 'VALID_SMTP_ACCEPTED';
-    } else if (mx.mxFound) {
-      status = 'VERIFIED';
-      reasonCode = 'VALID_DOMAIN_AND_MX';
-    } else {
-      status = 'UNKNOWN';
-      reasonCode = 'UNKNOWN_MAILBOX';
-    }
-
-    const verificationMethod: VerificationMethod =
-      smtpStatus !== 'SKIPPED' ? 'COMBINED' : mx.mxFound ? 'MX' : 'DNS';
-
-    return buildResult({
-      normalized,
-      status,
-      reasonCode,
-      syntaxValid: true,
-      domainValid: true,
-      dnsResolved: domainResult.dnsResolved,
-      mxFound: mx.mxFound,
-      mxRecords: mx.mxRecords,
-      mxStatus: mx.mxStatus,
-      smtpStatus,
-      isDisposable: false,
-      isRole: role.isRole,
-      roleType: role.roleType,
-      isCatchAll,
-      providerType,
-      verificationMethod,
-    });
-  }
+export function resetCatchAllCacheForTests(): void {
+  catchAllCache.clear();
 }
 
-async function getCatchAllCached(domain: string, mailServer: string, timeoutMs: number): Promise<boolean> {
-  const cached = catchAllCache.get(domain);
-  if (cached && cached.expiresAt > Date.now()) return cached.isCatchAll;
-  const isCatchAll = await detectCatchAll(domain, mailServer, { timeoutMs });
-  catchAllCache.set(domain, { isCatchAll, expiresAt: Date.now() + CATCH_ALL_TTL_MS });
-  return isCatchAll;
-}
+type Normalized = ReturnType<typeof normalizeEmail>;
 
-function buildResult(input: {
-  normalized: ReturnType<typeof normalizeEmail>;
-  status: VerificationStatus;
-  reasonCode: string;
+interface Evidence {
+  normalized: Normalized;
+  checks: VerificationCheck[];
   syntaxValid: boolean;
   domainValid: boolean;
   dnsResolved: boolean;
@@ -271,63 +40,215 @@ function buildResult(input: {
   mxRecords: VerificationResult['mxRecords'];
   mxStatus: string;
   smtpStatus: SmtpInternalStatus;
+  smtpResponse: string | null;
   isDisposable: boolean;
   isRole: boolean;
   roleType: string | null;
   isCatchAll: boolean;
   providerType: VerificationResult['providerType'];
   verificationMethod: VerificationMethod;
-}): VerificationResult {
+}
+
+export class EmailVerificationEngine {
+  async verify(rawEmail: string, options: VerifyEmailOptions = {}): Promise<VerificationResult> {
+    const config = loadVerificationConfig();
+    const normalized = normalizeEmail(rawEmail);
+    const ev: Evidence = {
+      normalized,
+      checks: [],
+      syntaxValid: false,
+      domainValid: false,
+      dnsResolved: false,
+      mxFound: false,
+      mxRecords: [],
+      mxStatus: 'NONE',
+      smtpStatus: 'SKIPPED',
+      smtpResponse: null,
+      isDisposable: false,
+      isRole: false,
+      roleType: null,
+      isCatchAll: false,
+      providerType: normalized.valid ? detectProviderType(normalized.domain) : 'UNKNOWN',
+      verificationMethod: 'LOCAL',
+    };
+
+    // 1. Syntax
+    const syntax = normalized.valid
+      ? validateSyntax(normalized.normalizedEmail, normalized.localPart, normalized.domain)
+      : { valid: false, reasonCode: 'INVALID_SYNTAX' };
+    if (!syntax.valid) {
+      ev.checks.push({ check: 'syntax', outcome: 'fail', detail: 'Address is not a well-formed email' });
+      return finish(ev, 'INVALID', syntax.reasonCode ?? 'INVALID_SYNTAX');
+    }
+    ev.syntaxValid = true;
+    ev.checks.push({ check: 'syntax', outcome: 'pass', detail: 'Address is well-formed' });
+
+    // 2. Disposable provider
+    if (getDefaultDisposableProvider().isDisposable(normalized.domain)) {
+      ev.isDisposable = true;
+      ev.domainValid = true;
+      ev.checks.push({ check: 'disposable', outcome: 'fail', detail: `${normalized.domain} is a disposable/temporary inbox provider` });
+      return finish(ev, 'DISPOSABLE', 'DISPOSABLE_DOMAIN');
+    }
+    ev.checks.push({ check: 'disposable', outcome: 'pass', detail: 'Not a known disposable provider' });
+
+    const role = detectRoleEmail(normalized.localPart);
+    ev.isRole = role.isRole;
+    ev.roleType = role.roleType;
+    ev.checks.push(
+      role.isRole
+        ? { check: 'role', outcome: 'warn', detail: `"${role.roleType}@" is a shared/role mailbox, not a person` }
+        : { check: 'role', outcome: 'pass', detail: 'Personal (non-role) address' },
+    );
+
+    // 3. Domain
+    ev.verificationMethod = 'DNS';
+    const domain = await validateDomain(normalized.domain);
+    ev.dnsResolved = domain.dnsResolved;
+    if (domain.result === 'DOMAIN_NOT_FOUND' || domain.result === 'DOMAIN_INVALID') {
+      ev.checks.push({ check: 'domain', outcome: 'fail', detail: `${normalized.domain} does not exist in DNS` });
+      return finish(ev, 'INVALID', 'INVALID_DOMAIN');
+    }
+    if (domain.result === 'DNS_TIMEOUT' || domain.result === 'DNS_ERROR') {
+      ev.checks.push({ check: 'domain', outcome: 'warn', detail: 'DNS lookups failed on every resolver; try again later' });
+      return finish(ev, 'UNKNOWN', domain.result === 'DNS_TIMEOUT' ? 'DNS_TIMEOUT' : 'DNS_FAILURE');
+    }
+    ev.domainValid = true;
+    ev.checks.push({ check: 'domain', outcome: 'pass', detail: `${normalized.domain} exists` });
+
+    // 4. Mail route
+    ev.verificationMethod = 'MX';
+    const mx = await verifyMx(normalized.domain);
+    ev.mxRecords = mx.mxRecords;
+    ev.mxStatus = mx.mxStatus;
+    if (mx.mxStatus === 'TIMEOUT' || mx.mxStatus === 'ERROR') {
+      ev.checks.push({ check: 'mx', outcome: 'warn', detail: 'MX lookup failed on every resolver; try again later' });
+      return finish(ev, 'UNKNOWN', mx.mxStatus === 'TIMEOUT' ? 'DNS_TIMEOUT' : 'DNS_FAILURE');
+    }
+    if (!mx.mxFound) {
+      ev.checks.push({
+        check: 'mx',
+        outcome: 'fail',
+        detail: mx.mxStatus === 'NULL_MX' ? 'Domain publishes a null MX: it accepts no email' : 'Domain has no MX or address records to deliver to',
+      });
+      return finish(ev, 'INVALID', mx.mxStatus === 'NULL_MX' ? 'NULL_MX' : 'NO_MX');
+    }
+    ev.mxFound = true;
+    ev.checks.push({ check: 'mx', outcome: 'pass', detail: `Mail handled by ${mx.mailServers.slice(0, 2).join(', ')}` });
+
+    // 5. Mailbox (SMTP RCPT probe)
+    const smtpEnabled = options.smtpEnabled ?? config.smtpEnabled;
+    if (!smtpEnabled) {
+      ev.checks.push({ check: 'smtp', outcome: 'skip', detail: 'Mailbox check is disabled in configuration' });
+      return finish(ev, role.isRole ? 'ROLE_BASED' : 'UNKNOWN', role.isRole ? 'ROLE_EMAIL' : 'SMTP_SKIPPED');
+    }
+    if (isSmtpUnavailable()) {
+      ev.smtpStatus = 'UNAVAILABLE';
+      ev.checks.push({ check: 'smtp', outcome: 'skip', detail: 'Outbound port 25 is unreachable from this server, so mailboxes cannot be probed' });
+      return finish(ev, role.isRole ? 'ROLE_BASED' : 'UNKNOWN', role.isRole ? 'ROLE_EMAIL' : 'SMTP_UNAVAILABLE');
+    }
+
+    const cachedCatchAll = catchAllCache.get(normalized.domain);
+    const knownCatchAll = cachedCatchAll && cachedCatchAll.expiresAt > Date.now() ? cachedCatchAll.isCatchAll : undefined;
+    const smtp: SmtpVerifyResult = await verifySmtpRecipient(normalized.normalizedEmail, mx.mailServers, {
+      timeoutMs: config.smtpTimeoutMs,
+      probeCatchAll: options.catchAllEnabled !== false && knownCatchAll === undefined,
+    });
+    ev.verificationMethod = 'COMBINED';
+    ev.smtpStatus = smtp.status;
+    ev.smtpResponse = smtp.response ?? null;
+
+    if (smtp.catchAll !== undefined) {
+      catchAllCache.set(normalized.domain, { isCatchAll: smtp.catchAll, expiresAt: Date.now() + CATCH_ALL_TTL_MS });
+    }
+    const isCatchAll = smtp.status === 'ACCEPTED' && (smtp.catchAll ?? knownCatchAll ?? false);
+    ev.isCatchAll = isCatchAll;
+
+    switch (smtp.status) {
+      case 'REJECTED':
+        ev.checks.push({ check: 'smtp', outcome: 'fail', detail: `Mail server says the mailbox does not exist (${smtp.response ?? 'rejected'})` });
+        return finish(ev, 'INVALID', 'SMTP_REJECTED');
+      case 'MAILBOX_FULL':
+        ev.checks.push({ check: 'smtp', outcome: 'warn', detail: `Mailbox exists but is full or over quota (${smtp.response ?? ''})` });
+        return finish(ev, 'RISKY', 'MAILBOX_FULL');
+      case 'ACCEPTED':
+        ev.checks.push({ check: 'smtp', outcome: 'pass', detail: `Mail server accepted the recipient (${smtp.response ?? '250'})` });
+        if (isCatchAll) {
+          ev.checks.push({ check: 'catch_all', outcome: 'warn', detail: 'Server also accepts made-up addresses, so acceptance does not prove this mailbox exists' });
+          return finish(ev, role.isRole ? 'ROLE_BASED' : 'CATCH_ALL', role.isRole ? 'ROLE_EMAIL' : 'CATCH_ALL_DOMAIN');
+        }
+        ev.checks.push({ check: 'catch_all', outcome: 'pass', detail: 'Server rejects made-up addresses, so acceptance is meaningful' });
+        return finish(ev, role.isRole ? 'ROLE_BASED' : 'VERIFIED', role.isRole ? 'ROLE_EMAIL' : 'VALID_SMTP_ACCEPTED');
+      default: {
+        // The mailbox could not be confirmed either way. This is not a negative
+        // signal about the address; it says nothing about it.
+        const reasonCode = SMTP_REASON[smtp.status] ?? 'UNKNOWN_MAILBOX';
+        ev.checks.push({ check: 'smtp', outcome: 'skip', detail: `${reasonMessage(reasonCode)}${smtp.response ? ` (${smtp.response})` : ''}` });
+        return finish(ev, role.isRole ? 'ROLE_BASED' : 'UNKNOWN', role.isRole ? 'ROLE_EMAIL' : reasonCode);
+      }
+    }
+  }
+}
+
+const SMTP_REASON: Partial<Record<SmtpInternalStatus, string>> = {
+  BLOCKED: 'SMTP_BLOCKED',
+  TIMEOUT: 'SMTP_TIMEOUT',
+  UNAVAILABLE: 'SMTP_UNAVAILABLE',
+  TEMPORARY_FAILURE: 'SMTP_TEMPORARY_FAILURE',
+  UNKNOWN: 'UNKNOWN_MAILBOX',
+};
+
+function finish(ev: Evidence, status: VerificationStatus, reasonCode: string): VerificationResult {
   const risk = scoreRisk({
-    status: input.status,
-    syntaxValid: input.syntaxValid,
-    mxFound: input.mxFound,
-    isDisposable: input.isDisposable,
-    isRole: input.isRole,
-    isCatchAll: input.isCatchAll,
-    smtpStatus: input.smtpStatus,
+    status,
+    syntaxValid: ev.syntaxValid,
+    mxFound: ev.mxFound,
+    isDisposable: ev.isDisposable,
+    isRole: ev.isRole,
+    isCatchAll: ev.isCatchAll,
+    smtpStatus: ev.smtpStatus,
   });
 
   const confidenceScore = scoreConfidence({
-    syntaxValid: input.syntaxValid,
-    domainValid: input.domainValid,
-    dnsResolved: input.dnsResolved,
-    mxFound: input.mxFound,
-    smtpStatus: input.smtpStatus,
-    isDisposable: input.isDisposable,
-    isCatchAll: input.isCatchAll,
-    isRole: input.isRole,
+    syntaxValid: ev.syntaxValid,
+    domainValid: ev.domainValid,
+    dnsResolved: ev.dnsResolved,
+    mxFound: ev.mxFound,
+    smtpStatus: ev.smtpStatus,
+    isDisposable: ev.isDisposable,
+    isCatchAll: ev.isCatchAll,
+    isRole: ev.isRole,
   });
 
-  const legacyScore = Math.max(0, Math.min(100, confidenceScore));
-
   return {
-    email: input.normalized.normalizedEmail,
-    originalEmail: input.normalized.originalEmail,
-    normalizedEmail: input.normalized.normalizedEmail,
-    status: input.status,
-    score: legacyScore,
+    email: ev.normalized.normalizedEmail,
+    originalEmail: ev.normalized.originalEmail,
+    normalizedEmail: ev.normalized.normalizedEmail,
+    status,
+    score: confidenceScore,
     riskScore: risk.riskScore,
     riskLevel: risk.riskLevel,
     confidenceScore,
-    reason: reasonMessage(input.reasonCode),
-    reasonCode: input.reasonCode,
-    domain: input.normalized.domain,
-    mxStatus: input.mxStatus,
-    syntaxValid: input.syntaxValid,
-    domainValid: input.domainValid,
-    dnsResolved: input.dnsResolved,
-    mxFound: input.mxFound,
-    mxRecords: input.mxRecords,
-    smtpStatus: input.smtpStatus,
-    isDisposable: input.isDisposable,
-    isRole: input.isRole,
-    roleType: input.roleType,
-    isCatchAll: input.isCatchAll,
-    providerType: input.providerType,
-    verificationMethod: input.verificationMethod,
+    reason: reasonMessage(reasonCode),
+    reasonCode,
+    domain: ev.normalized.domain,
+    mxStatus: ev.mxStatus,
+    syntaxValid: ev.syntaxValid,
+    domainValid: ev.domainValid,
+    dnsResolved: ev.dnsResolved,
+    mxFound: ev.mxFound,
+    mxRecords: ev.mxRecords,
+    smtpStatus: ev.smtpStatus,
+    isDisposable: ev.isDisposable,
+    isRole: ev.isRole,
+    roleType: ev.roleType,
+    isCatchAll: ev.isCatchAll,
+    providerType: ev.providerType,
+    verificationMethod: ev.verificationMethod,
     riskFactors: risk.riskFactors,
-    verificationVersion: 'v1',
+    checks: ev.checks,
+    smtpResponse: ev.smtpResponse,
+    verificationVersion: VERIFICATION_VERSION,
   };
 }
 

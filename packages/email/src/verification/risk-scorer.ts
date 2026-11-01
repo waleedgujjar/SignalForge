@@ -16,61 +16,35 @@ export interface RiskOutput {
   riskFactors: string[];
 }
 
+/**
+ * Bounce risk of sending to the address. Only evidence raises the score: an
+ * SMTP check that could not run (port blocked, timeout, greylisting) adds a
+ * small uncertainty penalty but never makes a clean address look dangerous.
+ */
 export function scoreRisk(input: RiskInput): RiskOutput {
   const factors: string[] = [];
   let score = 0;
+  const add = (points: number, factor: string) => {
+    score += points;
+    factors.push(factor);
+  };
 
-  if (input.isDisposable) {
-    score += 100;
-    factors.push('DISPOSABLE_DOMAIN');
+  if (input.isDisposable) add(100, 'DISPOSABLE_DOMAIN');
+  if (!input.syntaxValid) add(100, 'INVALID_SYNTAX');
+  if (input.syntaxValid && !input.mxFound && input.status === 'INVALID') add(100, 'NO_MX');
+  if (input.smtpStatus === 'REJECTED') add(100, 'SMTP_REJECTED');
+  if (input.smtpStatus === 'MAILBOX_FULL') add(55, 'MAILBOX_FULL');
+  if (input.isCatchAll) add(35, 'CATCH_ALL');
+  if (input.isRole) add(25, 'ROLE_EMAIL');
+  if (input.smtpStatus === 'BLOCKED') add(10, 'SMTP_BLOCKED');
+  if (input.smtpStatus === 'TEMPORARY_FAILURE') add(10, 'SMTP_TEMPORARY');
+  if (input.smtpStatus === 'TIMEOUT' || input.smtpStatus === 'UNKNOWN' || input.smtpStatus === 'UNAVAILABLE') {
+    add(10, 'SMTP_UNCONFIRMED');
   }
-  if (!input.syntaxValid) {
-    score += 100;
-    factors.push('INVALID_SYNTAX');
-  }
-  if (!input.mxFound && input.syntaxValid) {
-    score += 100;
-    factors.push('NO_MX');
-  }
-  if (input.smtpStatus === 'REJECTED') {
-    score += 100;
-    factors.push('SMTP_REJECTED');
-  }
-  if (input.isCatchAll) {
-    score += 30;
-    factors.push('CATCH_ALL');
-  }
-  if (input.isRole) {
-    score += 20;
-    factors.push('ROLE_EMAIL');
-  }
-  if (input.smtpStatus === 'BLOCKED') {
-    score += 20;
-    factors.push('SMTP_BLOCKED');
-  }
-  if (input.smtpStatus === 'TEMPORARY_FAILURE') {
-    score += 15;
-    factors.push('SMTP_TEMPORARY');
-  }
-  if (input.smtpStatus === 'TIMEOUT' || input.smtpStatus === 'UNKNOWN') {
-    score += 20;
-    factors.push('SMTP_UNCERTAIN');
-  }
-  if (input.status === 'UNKNOWN') {
-    score += 15;
-    factors.push('UNKNOWN_STATUS');
-  }
-  if (input.status === 'RISKY') {
-    score += 25;
-    factors.push('RISKY_STATUS');
-  }
+  if (input.status === 'UNKNOWN' && !input.mxFound) add(20, 'DNS_UNCONFIRMED');
 
   score = Math.min(100, score);
-  return {
-    riskScore: score,
-    riskLevel: toRiskLevel(score),
-    riskFactors: factors,
-  };
+  return { riskScore: score, riskLevel: toRiskLevel(score), riskFactors: factors };
 }
 
 function toRiskLevel(score: number): RiskLevel {

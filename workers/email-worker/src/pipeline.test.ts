@@ -201,6 +201,7 @@ vi.mock('@signalforge/email', () => ({
   leadToVariableContext: () => ({}),
   buildUnsubscribeUrl: () => 'https://api.test/unsubscribe?token=test',
   buildTrackingPixelUrl: () => 'https://api.test/tracking/open.gif?t=test',
+  resolveVerificationPolicy: () => ({}),
 }));
 
 vi.mock('@signalforge/allocation', () => ({

@@ -8,7 +8,7 @@ import {
   leadToVariableContext,
   buildUnsubscribeUrl,
   buildTrackingPixelUrl,
-  type VerificationResult,
+  resolveVerificationPolicy,
 } from '@signalforge/email';
 import {
   allocationService,
@@ -228,28 +228,14 @@ export async function processEmailSendJob(data: EmailSendJobData): Promise<Pipel
     return { ok: false, reason: 'REPLY_DETECTED' };
   }
 
+  // Same resolver as enrollment, so a lead accepted there is not blocked here.
   const verificationPolicy = {
-    excludeInvalid: true,
-    excludeDisposable: true,
-    excludeHighRisk: true,
-    minScore: 50,
-    blockUnverified: true,
-    allowRoleEmails: false,
-    blockRisky: true,
-    blockUnknown: true,
-    ...(workspaceVerificationPolicy
-      ? {
-          excludeInvalid: workspaceVerificationPolicy.excludeInvalid,
-          excludeDisposable: workspaceVerificationPolicy.excludeDisposable,
-          excludeHighRisk: workspaceVerificationPolicy.excludeHighRisk,
-          minScore: workspaceVerificationPolicy.minScore,
-          blockUnverified: workspaceVerificationPolicy.blockUnverified,
-          allowRoleEmails: workspaceVerificationPolicy.allowRoleEmails,
-          blockRisky: workspaceVerificationPolicy.blockRisky,
-          blockUnknown: workspaceVerificationPolicy.blockUnknown,
-        }
-      : {}),
-    ...((campaign.verificationPolicy as Record<string, unknown> | null) ?? {}),
+    ...resolveVerificationPolicy(
+      workspaceVerificationPolicy,
+      campaign.verificationPolicy as Record<string, unknown> | null,
+    ),
+    // A reviewer approved this enrollment despite a review-tier result.
+    reviewApproved: campaignLead.verificationApprovedAt != null,
   };
 
   const policy = evaluateSendingPolicy({
@@ -263,36 +249,7 @@ export async function processEmailSendJob(data: EmailSendJobData): Promise<Pipel
       websiteAnalysis: lead.websiteAnalyses?.[0] ?? null,
     }),
     suppressions: suppressions.map((s) => ({ type: s.type, value: s.value, reason: s.reason })),
-    verification: lead.verification
-      ? ({
-          email: lead.verification.email,
-          originalEmail: lead.verification.originalEmail ?? lead.verification.email,
-          normalizedEmail: lead.verification.normalizedEmail ?? lead.verification.email.toLowerCase(),
-          status: lead.verification.status,
-          score: lead.verification.score,
-          reason: lead.verification.reason ?? '',
-          reasonCode: lead.verification.reasonCode ?? '',
-          domain: lead.verification.domain ?? '',
-          mxStatus: lead.verification.mxStatus ?? '',
-          riskScore: lead.verification.riskScore ?? 0,
-          riskLevel: lead.verification.riskLevel ?? 'LOW',
-          confidenceScore: lead.verification.confidenceScore ?? 0,
-          syntaxValid: lead.verification.syntaxValid ?? true,
-          domainValid: lead.verification.domainValid ?? true,
-          dnsResolved: lead.verification.dnsResolved ?? true,
-          mxFound: lead.verification.mxFound ?? true,
-          mxRecords: [],
-          smtpStatus: 'SKIPPED',
-          isDisposable: lead.verification.isDisposable,
-          isRole: lead.verification.isRole,
-          roleType: lead.verification.roleType,
-          isCatchAll: lead.verification.isCatchAll,
-          providerType: lead.verification.providerType ?? 'UNKNOWN',
-          verificationMethod: (lead.verification.verificationMethod ?? 'LOCAL') as VerificationResult['verificationMethod'],
-          riskFactors: [],
-          verificationVersion: lead.verification.verificationVersion ?? 'v1',
-        } satisfies VerificationResult)
-      : null,
+    verification: lead.verification,
     verificationPolicy,
     mailboxes: [],
     rotationStrategy: campaign.rotationStrategy,

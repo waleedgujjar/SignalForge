@@ -1,56 +1,236 @@
+// Well-known disposable / temporary inbox providers. Extend at runtime with
+// EMAIL_VERIFICATION_EXTRA_DISPOSABLE_DOMAINS (comma-separated).
 const BUILTIN_DISPOSABLE = [
   'mailinator.com',
   'guerrillamail.com',
-  'tempmail.com',
-  'throwaway.email',
-  'yopmail.com',
-  '10minutemail.com',
-  'trashmail.com',
-  'temp-mail.org',
-  'getnada.com',
+  'guerrillamail.net',
+  'guerrillamail.org',
+  'guerrillamail.biz',
+  'guerrillamail.de',
+  'guerrillamailblock.com',
+  'grr.la',
+  'pokemail.net',
+  'spam4.me',
   'sharklasers.com',
+  'tempmail.com',
+  'temp-mail.org',
+  'temp-mail.io',
+  'tempmail.net',
+  'tempmail.dev',
+  'tempmailo.com',
+  'tempmail.plus',
+  'tempr.email',
+  'tempail.com',
+  'tempinbox.com',
+  'temporary-mail.net',
+  'tmpmail.org',
+  'tmpmail.net',
+  'tmails.net',
+  'throwaway.email',
+  'throwawaymail.com',
+  'yopmail.com',
+  'yopmail.net',
+  'yopmail.fr',
+  'cool.fr.nf',
+  'jetable.fr.nf',
+  'nospam.ze.tc',
+  'nomail.xl.cx',
+  'mega.zik.dj',
+  'speed.1s.fr',
+  'courriel.fr.nf',
+  'moncourrier.fr.nf',
+  'monemail.fr.nf',
+  'monmail.fr.nf',
+  '10minutemail.com',
+  '10minutemail.net',
+  '10minutemail.co.uk',
+  '10minemail.com',
+  '20minutemail.com',
+  '20minutemail.it',
+  '30minutemail.com',
+  '60minutemail.com',
+  'minutemail.com',
+  'trashmail.com',
+  'trashmail.net',
+  'trashmail.de',
+  'trashmail.io',
+  'trashmail.me',
+  'trash-mail.com',
+  'trashmail.ws',
+  'wegwerfmail.de',
+  'wegwerfmail.net',
+  'wegwerfemail.de',
+  'einrot.com',
+  'getnada.com',
+  'nada.email',
   'maildrop.cc',
   'dispostable.com',
   'fakeinbox.com',
   'mailnesia.com',
+  'mailcatch.com',
+  'mailinator.net',
+  'mailinator2.com',
+  'mailinater.com',
+  'binkmail.com',
+  'bobmail.info',
+  'chammy.info',
+  'devnullmail.com',
+  'letthemeatspam.com',
+  'mailin8r.com',
+  'mailinator.org',
+  'notmailinator.com',
+  'reallymymail.com',
+  'safetymail.info',
+  'sogetthis.com',
+  'spamhereplease.com',
+  'spamherelots.com',
+  'suremail.info',
+  'thisisnotmyrealemail.com',
+  'tradermail.info',
+  'veryrealemail.com',
+  'zippymail.info',
+  'emailondeck.com',
+  'emailfake.com',
+  'fakemail.net',
+  'fakemailgenerator.com',
+  'email-fake.com',
+  'mohmal.com',
+  'moakt.com',
+  'moakt.cc',
+  'tmail.ws',
+  'mailpoof.com',
+  'burnermail.io',
+  'inboxkitten.com',
+  'mintemail.com',
+  'mytemp.email',
+  'mytrashmail.com',
+  'mailforspam.com',
+  'spambox.us',
+  'spamgourmet.com',
+  'spamgourmet.net',
+  'spambog.com',
+  'spambog.de',
+  'spamfree24.org',
+  'spamex.com',
+  'spamavert.com',
+  'spamspot.com',
+  'spaml.com',
+  'spaml.de',
+  'anonbox.net',
+  'anonymbox.com',
+  'discard.email',
+  'discardmail.com',
+  'discardmail.de',
+  'dropmail.me',
+  'emltmp.com',
+  'emlhub.com',
+  'emlpro.com',
+  '33mail.com',
+  'harakirimail.com',
+  'incognitomail.org',
+  'jetable.org',
+  'kasmail.com',
+  'klzlk.com',
+  'linshiyouxiang.net',
+  'luxusmail.org',
+  'mail-temp.com',
+  'mailtemp.info',
+  'mailtothis.com',
+  'mvrht.com',
+  'nwldx.com',
+  'owlymail.com',
+  'rcpt.at',
+  'receiveee.com',
+  'rootfest.net',
+  'shieldemail.com',
+  'smashmail.de',
+  'spamdecoy.net',
+  'tempemail.net',
+  'tempemail.co',
+  'tempmailaddress.com',
+  'throam.com',
+  'tmpeml.com',
+  'trbvm.com',
+  'wh4f.org',
+  'xoxy.net',
+  'yepmail.net',
+  'zetmail.com',
+  '0-mail.com',
+  '0815.ru',
+  '1secmail.com',
+  '1secmail.net',
+  '1secmail.org',
+  'byom.de',
+  'cuvox.de',
+  'dayrep.com',
+  'einrot.de',
+  'fleckens.hu',
+  'gustr.com',
+  'jourrapide.com',
+  'rhyta.com',
+  'superrito.com',
+  'teleworm.us',
+  'armyspy.com',
+  'mailnull.com',
+  'mailshell.com',
+  'mailsiphon.com',
+  'mailzilla.com',
+  'nepwk.com',
+  'objectmail.com',
+  'proxymail.eu',
+  'put2.net',
+  'guerrillamail.info',
+  'spamcero.com',
+  'spamcorptastic.com',
+  'tempomail.fr',
+  'ephemail.net',
+  'filzmail.com',
+  'getairmail.com',
+  'hidemail.de',
+  'inboxbear.com',
+  'mailbox92.biz',
+  'mailboxy.fun',
+  'maildim.com',
+  'mailsac.com',
+  'mailslurp.com',
+  'tempm.com',
+  'vomoto.com',
+  'wuuvo.com',
 ];
-
-let cachedSet: Set<string> | null = null;
 
 export interface DisposableDomainProvider {
   isDisposable(domain: string): boolean;
 }
 
-export class FileBackedDisposableProvider implements DisposableDomainProvider {
-  private domains: Set<string>;
+class SetDisposableProvider implements DisposableDomainProvider {
+  private readonly domains: Set<string>;
 
-  constructor(extraDomains: string[] = []) {
-    this.domains = new Set([...BUILTIN_DISPOSABLE, ...extraDomains].map((d) => d.toLowerCase()));
+  constructor(domains: Iterable<string>) {
+    this.domains = new Set([...domains].map((d) => d.trim().toLowerCase()).filter(Boolean));
   }
 
   isDisposable(domain: string): boolean {
-    const normalized = domain.toLowerCase();
-    if (this.domains.has(normalized)) return true;
-    // subdomain of disposable root
-    for (const root of this.domains) {
-      if (normalized.endsWith(`.${root}`)) return true;
+    // Check the domain and each parent (sub.mailinator.com -> mailinator.com).
+    const labels = domain.toLowerCase().split('.');
+    for (let i = 0; i < labels.length - 1; i++) {
+      if (this.domains.has(labels.slice(i).join('.'))) return true;
     }
     return false;
   }
 }
 
-export function getDefaultDisposableProvider(): DisposableDomainProvider {
-  if (!cachedSet) {
-    cachedSet = new Set(BUILTIN_DISPOSABLE);
+export class FileBackedDisposableProvider extends SetDisposableProvider {
+  constructor(extraDomains: string[] = []) {
+    super([...BUILTIN_DISPOSABLE, ...extraDomains]);
   }
-  return {
-    isDisposable(domain: string) {
-      const normalized = domain.toLowerCase();
-      if (cachedSet!.has(normalized)) return true;
-      for (const root of cachedSet!) {
-        if (normalized.endsWith(`.${root}`)) return true;
-      }
-      return false;
-    },
-  };
+}
+
+let defaultProvider: DisposableDomainProvider | null = null;
+
+export function getDefaultDisposableProvider(): DisposableDomainProvider {
+  if (!defaultProvider) {
+    const extra = (process.env.EMAIL_VERIFICATION_EXTRA_DISPOSABLE_DOMAINS ?? '').split(',');
+    defaultProvider = new SetDisposableProvider([...BUILTIN_DISPOSABLE, ...extra]);
+  }
+  return defaultProvider;
 }

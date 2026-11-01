@@ -19,6 +19,23 @@ interface ParseOptions {
  * empty, etc.). Import routes map this to a 400 so a malformed upload is a clear
  * client error instead of an unhandled 500.
  */
+/**
+ * Fill gaps left by blank header cells ("Column N") and suffix repeated names
+ * ("Email", "Email 2") so every column has a distinct, defined key. A sparse
+ * header array used to crash column detection with a TypeError (HTTP 500).
+ */
+export function finalizeHeaders(raw: ReadonlyArray<string | undefined>): string[] {
+  const seen = new Map<string, number>();
+  const out: string[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const base = (raw[i] ?? '').replaceAll('\u0000', '').trim() || `Column ${i + 1}`;
+    const count = (seen.get(base.toLowerCase()) ?? 0) + 1;
+    seen.set(base.toLowerCase(), count);
+    out.push(count === 1 ? base : `${base} ${count}`);
+  }
+  return out;
+}
+
 export class FileParseError extends Error {
   constructor(message: string) {
     super(message);
@@ -126,9 +143,7 @@ function parseXLSBuffer(buffer: Buffer, maxRows: number): ParsedFileResult {
     return { headers: [], rows: [], totalRowCount: 0 };
   }
 
-  const headers = (matrix[0] ?? []).map(
-    (h, i) => String(h ?? '').trim() || `Column ${i + 1}`,
-  );
+  const headers = finalizeHeaders(Array.from(matrix[0] ?? [], (h) => String(h ?? '')));
   const rows: Record<string, string>[] = [];
   let totalRowCount = 0;
 
@@ -165,7 +180,7 @@ function parseDelimitedBuffer(buffer: Buffer, maxRows: number): Promise<ParsedFi
     let totalRowCount = 0;
 
     const parser = parse({
-      columns: true,
+      columns: (header: string[]) => finalizeHeaders(header),
       skip_empty_lines: true,
       trim: true,
       bom: true,
@@ -238,12 +253,12 @@ async function parseXLSXBuffer(buffer: Buffer, maxRows: number): Promise<ParsedF
     throw new FileParseError('The spreadsheet has no data rows.');
   }
 
-  const headers: string[] = [];
+  const rawHeaders: (string | undefined)[] = [];
   const headerRow = worksheet.getRow(1);
   headerRow.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-    const cellText = extractCellText(cell);
-    headers[colNumber - 1] = cellText || `Column ${colNumber}`;
+    rawHeaders[colNumber - 1] = extractCellText(cell);
   });
+  const headers = finalizeHeaders(rawHeaders);
 
   const rows: Record<string, string>[] = [];
   const totalRowCount = worksheet.rowCount - 1;
@@ -376,7 +391,7 @@ async function streamParseDelimitedFile(
 ): Promise<{ headers: string[]; totalRowCount: number }> {
   const delimiter = await detectDelimiterFromFile(filePath);
   const parser = parse({
-    columns: true,
+    columns: (header: string[]) => finalizeHeaders(header),
     skip_empty_lines: true,
     trim: true,
     bom: true,
@@ -439,11 +454,11 @@ async function streamParseXLSXFile(
       sawWorksheet = true;
       for await (const row of worksheet) {
         if (row.number === 1) {
-          const hs: string[] = [];
+          const hs: (string | undefined)[] = [];
           row.eachCell({ includeEmpty: true }, (cell, col) => {
-            hs[col - 1] = extractCellText(cell) || `Column ${col}`;
+            hs[col - 1] = extractCellText(cell);
           });
-          headers = hs;
+          headers = finalizeHeaders(hs);
           await handlers.onHeaders?.(headers);
           continue;
         }

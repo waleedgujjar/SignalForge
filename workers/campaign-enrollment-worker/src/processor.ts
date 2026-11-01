@@ -29,6 +29,7 @@ export async function processCampaignEnrollment(
     const result = await campaignLeadService.enrollLeads(campaignId, workspaceId, chunk, {
       actorUserId,
       force,
+      approvedLeadIds: data.approvedLeadIds,
     });
 
     if (result.blocked) {

@@ -504,6 +504,9 @@ model LeadVerification {
   providerType        ProviderType?
   verificationMethod  String?
   riskFactors         Json?
+  /// Ordered evidence explaining the verdict: [{ check, outcome, detail }].
+  checks              Json?
+  smtpResponse        String?
   verificationVersion String             @default("v1")
   verifiedAt          DateTime?
   createdAt           DateTime           @default(now())
@@ -564,6 +567,9 @@ model EmailVerificationJob {
   unknownCount      Int                        @default(0)
   disposableCount   Int                        @default(0)
   roleCount         Int                        @default(0)
+  catchAllCount     Int                        @default(0)
+  /// Emails answered from a fresh earlier result instead of being re-probed.
+  cachedCount       Int                        @default(0)
   failedCount       Int                        @default(0)
   error             String?
   metadata          Json                       @default("{}")
@@ -592,6 +598,8 @@ model EmailVerificationHistory {
   verificationMethod String?
   reasonCode         String?
   reasonMessage      String?
+  checks             Json?
+  smtpResponse       String?
   checkedAt          DateTime           @default(now())
   createdAt          DateTime           @default(now())
 
@@ -644,6 +652,7 @@ enum VerificationStatus {
   UNKNOWN
   DISPOSABLE
   ROLE_BASED
+  CATCH_ALL
 }
 
 model Tag {
@@ -1039,6 +1048,11 @@ model CampaignLead {
   lastReplyAt      DateTime?
   subjectOverride  String?
   bodyOverride     String?
+  /// Set when a user reviewed a risky/unknown/catch-all/role verification
+  /// result and approved sending to this lead anyway. Never waives invalid,
+  /// disposable or unverified.
+  verificationApprovedAt   DateTime?
+  verificationApprovedById String?
 
   campaign      Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   lead          Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)

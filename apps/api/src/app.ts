@@ -17,6 +17,7 @@ import { leadDiscoveryRoutes } from './routes/lead-discovery.js';
 import { leadRoutes } from './routes/leads.js';
 import { suppressionRoutes } from './routes/suppressions.js';
 import { verificationRoutes } from './routes/verification.js';
+import { verificationUploadRoutes } from './routes/verification-upload.js';
 import { userRoutes } from './routes/users.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { driveImportRoutes } from './routes/drive-import.js';
@@ -184,6 +185,7 @@ export async function buildApp() {
   await app.register(async (scope) => {
     await scope.register(rateLimit, expensiveRateLimit);
     await scope.register(verificationRoutes);
+    await scope.register(verificationUploadRoutes);
   }, { prefix: '/verification' });
   await app.register(async (scope) => {
     await scope.register(rateLimit, expensiveRateLimit);
