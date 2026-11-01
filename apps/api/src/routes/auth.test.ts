@@ -1,4 +1,10 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeAll, beforeEach } from 'vitest';
+
+// Cold-importing the whole app (every route and plugin) can take most of a
+// test's budget on a slow machine; pay it once here so the first test doesn't.
+beforeAll(async () => {
+  await import('../app.js');
+}, 120_000);
 
 const mockUsers: Map<
   string,
@@ -35,13 +41,16 @@ function getUserByEmail(email: string) {
   return [...mockUsers.values()].find((u) => u.email === email) ?? null;
 }
 
+const mockEnv = vi.hoisted(() => ({
+  LOG_LEVEL: 'error',
+  APP_URL: 'http://localhost:3000',
+  NODE_ENV: 'test',
+  SESSION_SECRET: 'test-session-secret-with-minimum-length',
+  SESSION_COOKIE_DOMAIN: undefined as string | undefined,
+}));
+
 vi.mock('@signalforge/config', () => {
-  const env = () => ({
-    LOG_LEVEL: 'error',
-    APP_URL: 'http://localhost:3000',
-    NODE_ENV: 'test',
-    SESSION_SECRET: 'test-session-secret-with-minimum-length',
-  });
+  const env = () => mockEnv;
   return { loadEnv: env, getEnv: env };
 });
 
@@ -292,6 +301,145 @@ describe('auth routes', () => {
 
     expect(logout.statusCode).toBe(200);
     expect(logout.json().ok).toBe(true);
+  });
+});
+
+describe('session cookie scope', () => {
+  const signupPayload = {
+    name: 'Cookie User',
+    email: 'cookie@example.com',
+    password: 'Password1',
+    confirmPassword: 'Password1',
+  };
+
+  beforeEach(() => {
+    mockUsers.clear();
+    mockSessions.clear();
+    mockWorkspaces.clear();
+    mockMembers.length = 0;
+    mockEnv.SESSION_COOKIE_DOMAIN = undefined;
+    vi.clearAllMocks();
+  });
+
+  function sessionCookies(response: { cookies: { name: string; value: string; domain?: string }[] }) {
+    return response.cookies.filter((c) => c.name === 'sf_session');
+  }
+
+  it('issues a host-only, HttpOnly, SameSite=Lax cookie when no cookie domain is configured', async () => {
+    const { buildApp } = await import('../app.js');
+    const app = await buildApp();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/signup',
+      headers: { origin: 'https://app.websiterankerrs.tech' },
+      payload: signupPayload,
+    });
+
+    const cookies = response.cookies.filter((c) => c.name === 'sf_session');
+    expect(cookies).toHaveLength(1);
+    expect(cookies[0]!.domain).toBeUndefined();
+    expect(cookies[0]!.httpOnly).toBe(true);
+    expect(cookies[0]!.sameSite).toBe('Lax');
+    expect(cookies[0]!.path).toBe('/');
+  });
+
+  it('scopes the login cookie to the shared parent domain when the browser is on it', async () => {
+    mockEnv.SESSION_COOKIE_DOMAIN = '.websiterankerrs.tech';
+    const { buildApp } = await import('../app.js');
+    const app = await buildApp();
+    await app.inject({ method: 'POST', url: '/auth/signup', payload: signupPayload });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      headers: { origin: 'https://app.websiterankerrs.tech' },
+      payload: { email: signupPayload.email, password: signupPayload.password },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const cookies = sessionCookies(response);
+    const scoped = cookies.find((c) => c.domain === 'websiterankerrs.tech');
+    expect(scoped?.value).toBeTruthy();
+    // The stale host-only copy is cleared so the API host never receives two.
+    const hostOnly = cookies.find((c) => c.domain === undefined);
+    expect(hostOnly?.value).toBe('');
+
+    // The scoped token is a working session.
+    const session = await app.inject({
+      method: 'GET',
+      url: '/auth/session',
+      cookies: { sf_session: scoped!.value },
+    });
+    expect(session.statusCode).toBe(200);
+  });
+
+  it('keeps a host-only cookie for origins outside the configured domain (Vercel proxy)', async () => {
+    mockEnv.SESSION_COOKIE_DOMAIN = 'websiterankerrs.tech';
+    const { buildApp } = await import('../app.js');
+    const app = await buildApp();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/signup',
+      headers: { origin: 'https://signal-forge-tan.vercel.app' },
+      payload: signupPayload,
+    });
+
+    const cookies = sessionCookies(response);
+    expect(cookies).toHaveLength(1);
+    expect(cookies[0]!.domain).toBeUndefined();
+    expect(cookies[0]!.value).toBeTruthy();
+  });
+
+  it('does not treat a look-alike origin as inside the domain', async () => {
+    mockEnv.SESSION_COOKIE_DOMAIN = 'websiterankerrs.tech';
+    const { buildApp } = await import('../app.js');
+    const app = await buildApp();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/auth/signup',
+      headers: { origin: 'https://evilwebsiterankerrs.tech' },
+      payload: signupPayload,
+    });
+
+    const cookies = sessionCookies(response);
+    expect(cookies).toHaveLength(1);
+    expect(cookies[0]!.domain).toBeUndefined();
+  });
+
+  it('logout clears both the host-only and the domain-scoped cookie', async () => {
+    mockEnv.SESSION_COOKIE_DOMAIN = 'websiterankerrs.tech';
+    const { buildApp } = await import('../app.js');
+    const app = await buildApp();
+
+    const signup = await app.inject({
+      method: 'POST',
+      url: '/auth/signup',
+      headers: { origin: 'https://app.websiterankerrs.tech' },
+      payload: signupPayload,
+    });
+    const token = sessionCookies(signup).find((c) => c.value)!.value;
+
+    const logout = await app.inject({
+      method: 'POST',
+      url: '/auth/logout',
+      headers: { origin: 'https://app.websiterankerrs.tech' },
+      cookies: { sf_session: token },
+    });
+
+    expect(logout.statusCode).toBe(200);
+    const cleared = sessionCookies(logout);
+    expect(cleared.map((c) => c.domain ?? 'host-only').sort()).toEqual(['host-only', 'websiterankerrs.tech']);
+    expect(cleared.every((c) => c.value === '')).toBe(true);
+
+    const session = await app.inject({
+      method: 'GET',
+      url: '/auth/session',
+      cookies: { sf_session: token },
+    });
+    expect(session.statusCode).toBe(401);
   });
 });
 

@@ -29,6 +29,12 @@ export const envSchema = z.object({
   // which calls the API directly instead of through the Vercel /api rewrite)
   // without changing APP_URL, which also builds email/reset links.
   CORS_EXTRA_ORIGINS: z.preprocess(emptyToUndefined, z.string().optional()),
+  // Parent domain shared by the web app and the API (e.g. websiterankerrs.tech
+  // for app.websiterankerrs.tech ↔ api.websiterankerrs.tech). When the browser
+  // calls the API from a host inside it, the session cookie is scoped to this
+  // domain so the web app's own host receives it too (its middleware gates
+  // protected pages on the cookie). Unset → host-only cookie (proxy setups).
+  SESSION_COOKIE_DOMAIN: z.preprocess(emptyToUndefined, z.string().optional()),
   WEB_PORT: z.coerce.number().int().positive().default(3000),
   API_PORT: z.coerce.number().int().positive().default(4000),
   DATABASE_URL: z.string().min(1),

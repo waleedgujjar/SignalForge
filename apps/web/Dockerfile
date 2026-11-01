@@ -61,6 +61,8 @@ COPY . .
 ARG NEXT_PUBLIC_API_URL=/api
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder"
+# Opt in to Next.js standalone output (see next.config.ts) for the runtime stage.
+ENV NEXT_OUTPUT=standalone
 
 RUN pnpm db:generate
 RUN pnpm --filter @signalforge/web... build

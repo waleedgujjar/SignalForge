@@ -34,17 +34,24 @@ if (rawApiOrigin && !API_ORIGIN && typeof window !== 'undefined') {
 }
 
 /**
- * API base for ordinary browser requests. When the app is served from the same
- * registrable domain as the API (e.g. app.websiterankerrs.tech ↔
+ * Opt-in direct API mode (NEXT_PUBLIC_API_DIRECT=true). Only enable it once the
+ * API scopes its session cookie to the shared parent domain
+ * (SESSION_COOKIE_DOMAIN): with a host-only cookie on the API host, the web
+ * app's own host never receives the cookie, its middleware sees no session,
+ * and every protected page bounces back to /login after a successful login.
+ */
+const API_DIRECT = sanitizeEnv(process.env.NEXT_PUBLIC_API_DIRECT) === 'true';
+
+/**
+ * API base for ordinary browser requests. In direct mode, when the app is served
+ * from the same registrable domain as the API (e.g. app.websiterankerrs.tech ↔
  * api.websiterankerrs.tech), call the API directly and skip the Vercel `/api`
- * rewrite — that edge→origin hop is the one that intermittently 502s. The
- * session cookie is host-only on the API host and SameSite=Lax, so it is still
- * sent on these same-site cross-subdomain requests (first-party, not a
- * third-party cookie). On any other host (e.g. the *.vercel.app deployment) keep
- * the same-origin `/api` proxy so the cookie stays first-party to that origin.
+ * rewrite — that edge→origin hop is the one that intermittently 502s. Otherwise
+ * (direct mode off, or any other host such as *.vercel.app) use the same-origin
+ * `/api` proxy, which keeps the session cookie first-party to the app's host.
  */
 function apiBase(): string {
-  if (typeof window !== 'undefined' && API_ORIGIN) {
+  if (API_DIRECT && typeof window !== 'undefined' && API_ORIGIN) {
     try {
       const apiHost = new URL(API_ORIGIN).hostname;
       const registrable = apiHost.split('.').slice(-2).join('.');
@@ -126,6 +133,9 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, timeoutMs = 
     if (!response.ok) {
       if (response.status === 413) {
         throw new Error('Import payload is too large. Try importing fewer rows at a time.');
+      }
+      if (response.status === 429) {
+        throw new Error('Too many attempts. Please wait a minute and try again.');
       }
       const error = await response.json().catch(() => ({ error: `Request failed (${response.status})` }));
       throw new Error(error.error ?? `HTTP ${response.status}`);
