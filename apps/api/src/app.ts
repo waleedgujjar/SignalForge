@@ -38,6 +38,8 @@ import { unsubscribeRoutes } from './routes/unsubscribe.js';
 import { trackingRoutes } from './routes/tracking.js';
 import { closeAllQueues } from './queue-registry.js';
 
+const NON_CREDENTIAL_AUTH_ROUTES = new Set(['/auth/session', '/auth/logout']);
+
 export async function buildApp() {
   const env = loadEnv();
   const app = Fastify({
@@ -132,6 +134,11 @@ export async function buildApp() {
       await authScope.register(rateLimit, {
         max: 10,
         timeWindow: '1 minute',
+        // The strict limit is for credential attempts. The session check runs on
+        // page loads and logout is harmless; counting them here 429'd normal
+        // browsing and made users look logged out. Both stay under the global
+        // limiter registered above.
+        allowList: (request) => NON_CREDENTIAL_AUTH_ROUTES.has(request.routeOptions.url ?? ''),
       });
       await authScope.register(authRoutes);
     },

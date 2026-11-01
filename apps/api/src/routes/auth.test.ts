@@ -304,6 +304,44 @@ describe('auth routes', () => {
   });
 });
 
+describe('auth rate limits', () => {
+  beforeEach(() => {
+    mockUsers.clear();
+    mockSessions.clear();
+    vi.clearAllMocks();
+  });
+
+  it('does not apply the strict credential limit to session checks', async () => {
+    const { buildApp } = await import('../app.js');
+    const app = await buildApp();
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 15; i++) {
+      statuses.push((await app.inject({ method: 'GET', url: '/auth/session' })).statusCode);
+    }
+
+    expect(statuses.every((s) => s === 401)).toBe(true);
+  });
+
+  it('still limits repeated login attempts', async () => {
+    const { buildApp } = await import('../app.js');
+    const app = await buildApp();
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 11; i++) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { email: 'missing@example.com', password: 'Password1' },
+      });
+      statuses.push(response.statusCode);
+    }
+
+    expect(statuses.slice(0, 10).every((s) => s === 401)).toBe(true);
+    expect(statuses[10]).toBe(429);
+  });
+});
+
 describe('session cookie scope', () => {
   const signupPayload = {
     name: 'Cookie User',
