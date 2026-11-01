@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { loadEnv } from '@signalforge/config';
 import { prisma } from '@signalforge/database';
 import {
   isSessionValid,
@@ -198,22 +199,67 @@ export function requirePermission(action: PermissionAction) {
   };
 }
 
+function configuredCookieDomain(): string | undefined {
+  const domain = loadEnv().SESSION_COOKIE_DOMAIN?.trim().replace(/^\./, '').toLowerCase();
+  return domain || undefined;
+}
+
+/**
+ * Domain to scope the session cookie to for this request, or undefined for a
+ * host-only cookie.
+ *
+ * When the web app runs on a host inside SESSION_COOKIE_DOMAIN and calls the API
+ * directly (app.websiterankerrs.tech → api.websiterankerrs.tech), a host-only
+ * cookie would live on the API host only and never reach the web app's host,
+ * whose Next.js middleware gates protected pages on it — so every page would
+ * bounce back to /login after a successful login. Scoping to the shared parent
+ * domain fixes that. Requests from any other origin (e.g. *.vercel.app going
+ * through the same-origin /api proxy) keep a host-only cookie, which the browser
+ * attributes to that proxy origin.
+ */
+export function sessionCookieDomain(request: FastifyRequest): string | undefined {
+  const domain = configuredCookieDomain();
+  const origin = request.headers.origin;
+  if (!domain || !origin) return undefined;
+  let host: string;
+  try {
+    host = new URL(origin).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+  return host === domain || host.endsWith(`.${domain}`) ? domain : undefined;
+}
+
 export function setSessionCookie(
   reply: FastifyReply,
   token: string,
   secure: boolean,
+  request: FastifyRequest,
 ): void {
+  const domain = sessionCookieDomain(request);
+  if (domain) {
+    // Drop any older host-only copy so the browser does not send two
+    // sf_session cookies to the API host.
+    reply.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
+  }
   reply.setCookie(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
     secure,
     sameSite: 'lax',
     path: '/',
     maxAge: SESSION_MAX_AGE_SECONDS,
+    ...(domain ? { domain } : {}),
   });
 }
 
 export function clearSessionCookie(reply: FastifyReply): void {
   reply.clearCookie(SESSION_COOKIE_NAME, { path: '/' });
+  // Also clear the domain-scoped variant. A browser ignores this when the
+  // response comes from a host outside the domain, so it is always safe.
+  const domain = configuredCookieDomain();
+  if (domain) {
+    reply.clearCookie(SESSION_COOKIE_NAME, { path: '/', domain });
+  }
 }
 
 export function getWorkspaceId(request: FastifyRequest): string {

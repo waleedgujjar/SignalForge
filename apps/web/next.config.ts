@@ -9,6 +9,9 @@ const withBundleAnalyzer = bundleAnalyzer({
 });
 
 const nextConfig: NextConfig = {
+  // Standalone output is opt-in: the Docker image (apps/web/Dockerfile) needs
+  // it, while Vercel uses its own build adapter and fails with it enabled.
+  ...(process.env.NEXT_OUTPUT === 'standalone' ? { output: 'standalone' as const } : {}),
   transpilePackages: [],
   reactStrictMode: true,
   async rewrites() {

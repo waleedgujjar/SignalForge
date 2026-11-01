@@ -14,6 +14,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build", "db:generate"],
+      "env": ["NEXT_OUTPUT", "NEXT_PUBLIC_API_DIRECT"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     "dev": {
