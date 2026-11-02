@@ -37,7 +37,7 @@ describe('processEmailVerificationJob', () => {
   it('verifies and increments counters for running jobs', async () => {
     mockFindUnique.mockResolvedValue({ id: 'job-1', status: 'RUNNING' });
     mockFindFirst.mockResolvedValue({ id: 'lead-1' });
-    mockVerifyAndPersist.mockResolvedValue({ status: 'VERIFIED' });
+    mockVerifyAndPersist.mockResolvedValue({ status: 'VERIFIED', cached: false });
 
     const { processEmailVerificationJob } = await import('./processor.js');
     const result = await processEmailVerificationJob({
@@ -47,6 +47,20 @@ describe('processEmailVerificationJob', () => {
     });
 
     expect(result).toEqual({ status: 'VERIFIED', email: 'user@example.com' });
-    expect(mockIncrementCounter).toHaveBeenCalledWith('job-1', 'VERIFIED');
+    expect(mockIncrementCounter).toHaveBeenCalledWith('job-1', 'VERIFIED', { cached: false });
+  });
+
+  it('counts a failure only on the final attempt', async () => {
+    mockFindUnique.mockResolvedValue({ id: 'job-1', status: 'RUNNING' });
+    mockFindFirst.mockResolvedValue(null);
+    mockVerifyAndPersist.mockRejectedValue(new Error('db down'));
+    const { processEmailVerificationJob } = await import('./processor.js');
+    const data = { jobId: 'job-1', workspaceId: 'ws-1', email: 'user@example.com' };
+
+    await expect(processEmailVerificationJob(data, { finalAttempt: false })).rejects.toThrow('db down');
+    expect(mockIncrementCounter).not.toHaveBeenCalled();
+
+    await expect(processEmailVerificationJob(data, { finalAttempt: true })).rejects.toThrow('db down');
+    expect(mockIncrementCounter).toHaveBeenCalledWith('job-1', 'UNKNOWN', { failed: true });
   });
 });

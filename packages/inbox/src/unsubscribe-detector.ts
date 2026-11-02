@@ -2,7 +2,7 @@ import type { InboundMessage } from '@signalforge/inbound';
 
 export interface UnsubscribeDetectionResult {
   detected: boolean;
-  reason?: 'KEYWORD' | 'LIST_UNSUBSCRIBE' | 'AUTO_SUBMITTED';
+  reason?: 'KEYWORD' | 'AUTO_SUBMITTED';
   matchedPhrase?: string;
 }
 
@@ -17,14 +17,17 @@ const UNSUBSCRIBE_PATTERNS = [
   /\bno longer interested\b/i,
 ];
 
+/**
+ * Detects a request to stop receiving email in a reply.
+ *
+ * Only the text the person wrote is checked, never the quoted original: our
+ * outgoing emails carry an unsubscribe footer, so scanning the quote would
+ * flag every reply. A List-Unsubscribe header on an inbound message is not a
+ * request either; it only means the message came from a mailing system.
+ */
 export function detectUnsubscribe(
   message: Pick<InboundMessage, 'textBody' | 'htmlBody' | 'subject' | 'rawHeaders'>,
 ): UnsubscribeDetectionResult {
-  const listUnsubscribe = message.rawHeaders['list-unsubscribe'];
-  if (listUnsubscribe) {
-    return { detected: true, reason: 'LIST_UNSUBSCRIBE', matchedPhrase: 'List-Unsubscribe header' };
-  }
-
   const autoSubmitted = message.rawHeaders['auto-submitted'];
   if (autoSubmitted && String(autoSubmitted).toLowerCase() !== 'no') {
     const autoValue = String(autoSubmitted).toLowerCase();
@@ -33,9 +36,10 @@ export function detectUnsubscribe(
     }
   }
 
-  const corpus = [message.subject, message.textBody, stripHtml(message.htmlBody)]
-    .filter(Boolean)
-    .join('\n');
+  const body = message.textBody
+    ? newReplyText(message.textBody)
+    : stripHtml(newReplyHtml(message.htmlBody));
+  const corpus = [message.subject, body].filter(Boolean).join('\n');
 
   for (const pattern of UNSUBSCRIBE_PATTERNS) {
     const match = pattern.exec(corpus);
@@ -49,6 +53,41 @@ export function detectUnsubscribe(
   }
 
   return { detected: false };
+}
+
+// Where a reply's quoted history begins, across common clients.
+const QUOTE_HEADERS = [
+  /^\s*On\b[^\n]{0,300}(?:\n[^\n]{0,300})?\bwrote:\s*$/im, // Gmail / Apple Mail (may wrap)
+  /^\s*-{2,}\s*Original Message\s*-{2,}/im, // Outlook
+  /^\s*_{5,}\s*$/m, // Outlook separator line
+  /^\s*From:\s.+\n\s*(?:Sent|Date):\s/im, // Outlook header block
+  /^\s*Le\b[^\n]{0,300}a écrit\s*:\s*$/im, // French Gmail
+  /^\s*Am\b[^\n]{0,300}schrieb[^\n]*:\s*$/im, // German Gmail
+];
+
+/** The part of a plain-text reply above the quoted original. */
+export function newReplyText(text: string): string {
+  let cut = text.length;
+  for (const pattern of QUOTE_HEADERS) {
+    const match = pattern.exec(text);
+    if (match && match.index < cut) cut = match.index;
+  }
+  return text
+    .slice(0, cut)
+    .split(/\r?\n/)
+    .filter((line) => !line.trimStart().startsWith('>'))
+    .join('\n');
+}
+
+function newReplyHtml(html: string | null | undefined): string {
+  if (!html) return '';
+  const markers = [/<blockquote\b/i, /class=["'][^"']*gmail_quote/i, /id=["']?(?:appendonsend|divRplyFwdMsg)/i];
+  let cut = html.length;
+  for (const marker of markers) {
+    const match = marker.exec(html);
+    if (match && match.index < cut) cut = match.index;
+  }
+  return html.slice(0, cut);
 }
 
 function stripHtml(html: string | null | undefined): string {

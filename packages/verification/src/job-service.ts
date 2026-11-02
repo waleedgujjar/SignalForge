@@ -62,14 +62,19 @@ export class VerificationJobService {
     return job;
   }
 
-  async incrementCounter(jobId: string, status: string, failed = false): Promise<void> {
+  async incrementCounter(
+    jobId: string,
+    status: string,
+    opts: { failed?: boolean; cached?: boolean } = {},
+  ): Promise<void> {
     const field = statusCounterField(status);
     await prisma.emailVerificationJob.update({
       where: { id: jobId },
       data: {
         completed: { increment: 1 },
         pending: { decrement: 1 },
-        ...(failed ? { failedCount: { increment: 1 } } : {}),
+        ...(opts.failed ? { failedCount: { increment: 1 } } : {}),
+        ...(opts.cached ? { cachedCount: { increment: 1 } } : {}),
         ...(field ? { [field]: { increment: 1 } } : {}),
       },
     });
@@ -154,6 +159,8 @@ function statusCounterField(status: string): string | null {
       return 'disposableCount';
     case 'ROLE_BASED':
       return 'roleCount';
+    case 'CATCH_ALL':
+      return 'catchAllCount';
     default:
       return null;
   }

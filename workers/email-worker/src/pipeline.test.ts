@@ -201,6 +201,7 @@ vi.mock('@signalforge/email', () => ({
   leadToVariableContext: () => ({}),
   buildUnsubscribeUrl: () => 'https://api.test/unsubscribe?token=test',
   buildTrackingPixelUrl: () => 'https://api.test/tracking/open.gif?t=test',
+  resolveVerificationPolicy: () => ({}),
 }));
 
 vi.mock('@signalforge/allocation', () => ({
@@ -377,6 +378,33 @@ describe('processEmailSendJob', () => {
     expect(result.ok).toBe(true);
     expect(consumeReservationMock).toHaveBeenCalledWith({ reservationId: 'res_1' });
     expect(markSentMock).toHaveBeenCalled();
+  });
+
+  it('does not retry or mark the mailbox unhealthy when recording fails after the SMTP send', async () => {
+    allocateAccountMock.mockImplementationOnce(async () => ({
+      status: 'ALLOCATED',
+      mailboxId: 'mb_1',
+      reservationId: 'res_1',
+      strategy: 'ROUND_ROBIN',
+      poolId: null,
+    }));
+    const { prisma } = await import('@signalforge/database');
+    vi.mocked(prisma.$transaction).mockRejectedValueOnce(new Error('connection reset by peer'));
+    const { processEmailSendJob } = await import('./pipeline.js');
+    const result = await processEmailSendJob({
+      sendingJobId: 'job_1',
+      workspaceId: 'ws_1',
+      campaignId: 'camp_1',
+      campaignLeadId: 'cl_1',
+      leadId: 'lead_1',
+      stepId: 'step_1',
+    });
+    expect(result).toEqual({ ok: true, providerMessageId: 'smtp-1' });
+    expect(markSentMock).toHaveBeenCalledWith('job_1', { providerMessageId: 'smtp-1', emailMessageId: null });
+    expect(consumeReservationMock).toHaveBeenCalledWith({ reservationId: 'res_1' });
+    expect(releaseReservationMock).not.toHaveBeenCalled();
+    expect(rescheduleForRetryMock).not.toHaveBeenCalled();
+    expect(markFailedMock).not.toHaveBeenCalled();
   });
 
   it('records exactly one SENT delivery event per successful send', async () => {

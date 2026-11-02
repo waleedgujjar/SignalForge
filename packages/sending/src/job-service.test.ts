@@ -53,14 +53,27 @@ const sendingJobUpdateMock = vi.fn(async (args: { data: Record<string, unknown> 
   status: 'PROCESSING',
   ...args.data,
 }));
+// Conditional claim: applies only while the job is in a claimable state.
+const claimState = { status: 'SCHEDULED', attempts: 0 };
+const sendingJobUpdateManyTxMock = vi.fn(
+  async (args: { where: { status: { in: string[] } } }) => {
+    if (!args.where.status.in.includes(claimState.status)) return { count: 0 };
+    claimState.status = 'PROCESSING';
+    claimState.attempts += 1;
+    return { count: 1 };
+  },
+);
 const transactionMock = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
   fn({
     sendingJob: {
       findUnique: sendingJobFindUniqueMock,
       update: sendingJobUpdateMock,
+      updateMany: sendingJobUpdateManyTxMock,
     },
   }),
 );
+// createJob looks for an existing (campaignLead, step) job first; none by default.
+const sendingJobTopFindUniqueMock = vi.fn(async (): Promise<Record<string, unknown> | null> => null);
 
 vi.mock('@signalforge/database', () => ({
   Prisma: {
@@ -83,6 +96,7 @@ vi.mock('@signalforge/database', () => ({
     campaignStep: { findMany: vi.fn(async () => []) },
     sendingJob: {
       upsert: sendingJobUpsertMock,
+      findUnique: sendingJobTopFindUniqueMock,
       updateMany: vi.fn(async () => ({ count: 0 })),
     },
     $transaction: transactionMock,
@@ -242,17 +256,9 @@ describe('SendingJobService.scheduleNextStep', () => {
 
 describe('SendingJobService.claimJob', () => {
   it('claims a SCHEDULED job exactly once', async () => {
-    let claimed = false;
-    sendingJobFindUniqueMock.mockImplementation(async () => {
-      if (claimed) {
-        return { id: 'job_1', status: 'PROCESSING', attempts: 1 };
-      }
-      return { id: 'job_1', status: 'SCHEDULED', attempts: 0 };
-    });
-    sendingJobUpdateMock.mockImplementation(async () => {
-      claimed = true;
-      return { id: 'job_1', status: 'PROCESSING', attempts: 1 };
-    });
+    claimState.status = 'SCHEDULED';
+    claimState.attempts = 0;
+    sendingJobFindUniqueMock.mockImplementation(async () => ({ id: 'job_1', ...claimState }));
 
     const { SendingJobService } = await import('./job-service.js');
     const service = new SendingJobService();
@@ -262,5 +268,33 @@ describe('SendingJobService.claimJob', () => {
 
     expect(first).not.toBeNull();
     expect(second).toBeNull();
+  });
+});
+
+describe('SendingJobService.createJob', () => {
+  const input = {
+    workspaceId: 'ws_1',
+    campaignId: 'camp_1',
+    campaignLeadId: 'cl_1',
+    leadId: 'lead_1',
+    sequenceStepId: 'step_0',
+    scheduledAt: new Date('2026-01-01T10:00:00Z'),
+  };
+
+  it.each(['SENT', 'CANCELLED', 'PROCESSING', 'FAILED'])('does not reschedule a %s step', async (status) => {
+    sendingJobTopFindUniqueMock.mockResolvedValueOnce({ id: 'job_done', status });
+    sendingJobUpsertMock.mockClear();
+    const { SendingJobService } = await import('./job-service.js');
+    const job = await new SendingJobService().createJob(input);
+    expect(job).toMatchObject({ id: 'job_done', status });
+    expect(sendingJobUpsertMock).not.toHaveBeenCalled();
+  });
+
+  it('schedules a new or still-pending step', async () => {
+    sendingJobTopFindUniqueMock.mockResolvedValueOnce({ id: 'job_old', status: 'SCHEDULED' });
+    sendingJobUpsertMock.mockClear();
+    const { SendingJobService } = await import('./job-service.js');
+    await new SendingJobService().createJob(input);
+    expect(sendingJobUpsertMock).toHaveBeenCalledTimes(1);
   });
 });

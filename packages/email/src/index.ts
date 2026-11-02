@@ -31,7 +31,16 @@ export {
   emailVerificationEngine,
   EmailVerificationEngine,
   shouldExcludeByVerification,
+  resolveVerificationPolicy,
+  verificationEligibilityTier,
+  REVIEWABLE_VERIFICATION_REASONS,
+  VERIFICATION_VERSION,
+  isVerificationFresh,
+  verificationCacheTtlMs,
+  type VerificationLike,
   type VerificationEligibilityPolicy,
+  type VerificationEligibilityTier,
+  type VerificationCheck,
 } from './verification/index.js';
 
 export { checkSuppression, extractDomain } from './suppression-engine.js';

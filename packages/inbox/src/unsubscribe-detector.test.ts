@@ -45,16 +45,60 @@ describe('detectUnsubscribe', () => {
     ).toBe(true);
   });
 
-  it('detects List-Unsubscribe header without body keywords', () => {
+  it('does not treat a List-Unsubscribe header on a reply as a request', () => {
     const result = detectUnsubscribe({
       subject: 'Thanks',
       textBody: 'Got it.',
       htmlBody: null,
       rawHeaders: { 'list-unsubscribe': '<mailto:unsub@example.com>' },
     });
-    expect(result.detected).toBe(true);
-    expect(result.reason).toBe('LIST_UNSUBSCRIBE');
-    expect(result.matchedPhrase).toBe('List-Unsubscribe header');
+    expect(result.detected).toBe(false);
+  });
+
+  it('ignores the unsubscribe footer in the quoted original (Gmail)', () => {
+    const result = detectUnsubscribe({
+      subject: 'Re: Quick question',
+      textBody: [
+        'Sounds good, send me the deck.',
+        '',
+        'On Mon, 3 Nov 2026 at 10:02, Waleed <waleed@excersys.com>',
+        'wrote:',
+        '> Hi Jane,',
+        "> If you'd rather not hear from me again: https://api.test/unsubscribe?token=x",
+      ].join('\n'),
+      htmlBody: null,
+      rawHeaders: {},
+    });
+    expect(result.detected).toBe(false);
+  });
+
+  it('ignores quoted history in Outlook and HTML replies', () => {
+    expect(
+      detectUnsubscribe({
+        subject: 'RE: Quick question',
+        textBody: ['Thanks, interested.', '', '-----Original Message-----', 'From: Waleed', 'unsubscribe here'].join('\n'),
+        htmlBody: null,
+        rawHeaders: {},
+      }).detected,
+    ).toBe(false);
+    expect(
+      detectUnsubscribe({
+        subject: 'Re: Quick question',
+        textBody: null,
+        htmlBody: '<div>Yes please</div><div class="gmail_quote"><blockquote>unsubscribe</blockquote></div>',
+        rawHeaders: {},
+      }).detected,
+    ).toBe(false);
+  });
+
+  it('still detects a request written above the quote', () => {
+    const result = detectUnsubscribe({
+      subject: 'Re: Quick question',
+      textBody: ['Please remove me from your list.', '', 'On Mon, Waleed wrote:', '> Hi'].join('\n'),
+      htmlBody: null,
+      rawHeaders: {},
+    });
+    expect(result).toMatchObject({ detected: true, reason: 'KEYWORD' });
   });
 
   it('does not flag auto-replied messages as unsubscribe', () => {

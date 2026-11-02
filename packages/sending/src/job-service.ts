@@ -28,8 +28,25 @@ export interface BootstrapCampaignResult {
   eligibleLeads: number;
 }
 
+/** Job states createJob must never move back to SCHEDULED. */
+const SETTLED_JOB_STATUSES = new Set(['SENT', 'CANCELLED', 'PROCESSING', 'FAILED']);
+
 export class SendingJobService {
   async createJob(input: CreateSendingJobInput): Promise<SendingJob> {
+    // A step that was already sent, cancelled or is being sent right now must
+    // keep its state: resetting it to SCHEDULED (as a blind upsert did) emailed
+    // the lead again when a campaign was re-bootstrapped.
+    const existing = await prisma.sendingJob.findUnique({
+      where: {
+        campaignLeadId_sequenceStepId: {
+          campaignLeadId: input.campaignLeadId,
+          sequenceStepId: input.sequenceStepId,
+        },
+      },
+    });
+    if (existing && SETTLED_JOB_STATUSES.has(existing.status)) {
+      return existing;
+    }
     return prisma.sendingJob.upsert({
       where: {
         campaignLeadId_sequenceStepId: {
@@ -384,19 +401,18 @@ export class SendingJobService {
   async claimJob(jobId: string): Promise<SendingJob | null> {
     try {
       return await prisma.$transaction(async (tx) => {
-        const current = await tx.sendingJob.findUnique({ where: { id: jobId } });
-        if (!current) return null;
-        if (current.status !== 'SCHEDULED' && current.status !== 'RETRYING' && current.status !== 'PENDING') {
-          return null;
-        }
-        return tx.sendingJob.update({
-          where: { id: jobId },
+        // Check and claim in one statement so two workers holding the same job
+        // cannot both pass a status check made on a stale read.
+        const claimed = await tx.sendingJob.updateMany({
+          where: { id: jobId, status: { in: ['SCHEDULED', 'RETRYING', 'PENDING'] } },
           data: {
             status: 'PROCESSING',
             claimedAt: new Date(),
             attempts: { increment: 1 },
           },
         });
+        if (claimed.count === 0) return null;
+        return tx.sendingJob.findUnique({ where: { id: jobId } });
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {

@@ -1,8 +1,15 @@
 import { prisma } from '@signalforge/database';
-import { checkSuppression, shouldExcludeByVerification } from '@signalforge/email';
+import {
+  checkSuppression,
+  isVerificationFresh,
+  resolveVerificationPolicy,
+  shouldExcludeByVerification,
+  verificationEligibilityTier,
+  REVIEWABLE_VERIFICATION_REASONS,
+} from '@signalforge/email';
 import type { SuppressionEntry } from '@signalforge/email';
 import type { SuppressionPolicyConfig, VerificationPolicyConfig } from './types.js';
-import type { BulkEligibilityReport, LeadEligibilityResult } from './types.js';
+import type { BulkEligibilityReport, EligibilityReason, LeadEligibilityResult } from './types.js';
 
 const BLOCKED_LEAD_STATUSES = new Set(['UNSUBSCRIBED', 'BOUNCED', 'ARCHIVED']);
 
@@ -18,22 +25,12 @@ type LeadRecord = {
     mxStatus?: string | null;
     riskScore?: number | null;
     riskLevel?: string | null;
+    reasonCode?: string | null;
+    verifiedAt?: Date | null;
+    verificationVersion?: string | null;
     email?: string;
   } | null;
 };
-
-function defaultVerificationPolicy(): VerificationPolicyConfig {
-  return {
-    excludeInvalid: true,
-    excludeDisposable: true,
-    excludeHighRisk: true,
-    minScore: 50,
-    blockUnverified: false,
-    allowRoleEmails: false,
-    blockRisky: true,
-    blockUnknown: true,
-  };
-}
 
 function mapVerificationReason(reason?: string): LeadEligibilityResult['reasons'][number] {
   switch (reason) {
@@ -45,6 +42,10 @@ function mapVerificationReason(reason?: string): LeadEligibilityResult['reasons'
       return 'RISKY_EMAIL';
     case 'EMAIL_VERIFICATION_UNKNOWN':
       return 'UNKNOWN_EMAIL';
+    case 'EMAIL_VERIFICATION_CATCH_ALL':
+      return 'CATCH_ALL_EMAIL';
+    case 'EMAIL_VERIFICATION_LOW_SCORE':
+      return 'LOW_CONFIDENCE_EMAIL';
     default:
       return 'INVALID_EMAIL';
   }
@@ -58,6 +59,7 @@ function evaluateLead(
     verificationPolicy: VerificationPolicyConfig;
     respectSuppressions: boolean;
     requireQualification: boolean;
+    approvedLeadIds: Set<string>;
   },
 ): LeadEligibilityResult {
   const reasons: LeadEligibilityResult['reasons'] = [];
@@ -87,43 +89,15 @@ function evaluateLead(
     }
   }
 
-  const verification = lead.verification;
-  const exclusion = shouldExcludeByVerification(
-    verification
-      ? {
-          email: verification.email ?? lead.email,
-          originalEmail: lead.email,
-          normalizedEmail: lead.email.toLowerCase(),
-          status: verification.status as never,
-          score: verification.score,
-          riskScore: verification.riskScore ?? 0,
-          riskLevel: (verification.riskLevel ?? 'LOW') as never,
-          confidenceScore: 0,
-          reason: verification.reason ?? '',
-          reasonCode: '',
-          domain: verification.domain ?? lead.email.split('@')[1] ?? '',
-          mxStatus: verification.mxStatus ?? 'UNKNOWN',
-          syntaxValid: true,
-          domainValid: true,
-          dnsResolved: true,
-          mxFound: true,
-          mxRecords: [],
-          smtpStatus: 'SKIPPED',
-          isDisposable: verification.status === 'DISPOSABLE',
-          isRole: verification.status === 'ROLE_BASED',
-          roleType: null,
-          isCatchAll: false,
-          providerType: 'UNKNOWN',
-          verificationMethod: 'LOCAL',
-          riskFactors: [],
-          verificationVersion: 'v1',
-        }
-      : null,
-    options.verificationPolicy,
-  );
-
+  const verification = lead.verification ?? null;
+  const exclusion = shouldExcludeByVerification(verification, options.verificationPolicy);
+  let reviewApproved = false;
   if (exclusion.excluded) {
-    reasons.push(mapVerificationReason(exclusion.reason));
+    if (options.approvedLeadIds.has(lead.id) && REVIEWABLE_VERIFICATION_REASONS.has(exclusion.reason!)) {
+      reviewApproved = true;
+    } else {
+      reasons.push(mapVerificationReason(exclusion.reason));
+    }
   }
 
   return {
@@ -131,8 +105,33 @@ function evaluateLead(
     email: lead.email,
     eligible: reasons.length === 0,
     reasons,
+    verification: verification
+      ? {
+          status: verification.status,
+          tier: verificationEligibilityTier(verification.status),
+          reason: verification.reason ?? null,
+          verifiedAt: verification.verifiedAt?.toISOString() ?? null,
+          stale: !isVerificationFresh({
+            status: verification.status,
+            reasonCode: verification.reasonCode,
+            verifiedAt: verification.verifiedAt,
+            verificationVersion: verification.verificationVersion,
+          }),
+        }
+      : null,
+    reviewable: reasons.length > 0 && reasons.every((r) => REVIEWABLE_REASONS.has(r)),
+    reviewApproved,
   };
 }
+
+/** Lead-level reasons a reviewer may override (verification review tier only). */
+const REVIEWABLE_REASONS = new Set<EligibilityReason>([
+  'RISKY_EMAIL',
+  'UNKNOWN_EMAIL',
+  'CATCH_ALL_EMAIL',
+  'ROLE_EMAIL',
+  'LOW_CONFIDENCE_EMAIL',
+]);
 
 export class CampaignEligibilityService {
   async checkLead(
@@ -163,6 +162,8 @@ export class CampaignEligibilityService {
     policies?: {
       verificationPolicy?: VerificationPolicyConfig;
       suppressionPolicy?: SuppressionPolicyConfig;
+      /** Leads a reviewer approved despite a review-tier verification result. */
+      approvedLeadIds?: string[];
     },
   ): Promise<BulkEligibilityReport> {
     const [campaign, workspacePolicy, leads, enrolled, suppressions] = await Promise.all([
@@ -185,23 +186,11 @@ export class CampaignEligibilityService {
       }),
     ]);
 
-    const verificationPolicy = {
-      ...defaultVerificationPolicy(),
-      ...(workspacePolicy
-        ? {
-            excludeInvalid: workspacePolicy.excludeInvalid,
-            excludeDisposable: workspacePolicy.excludeDisposable,
-            excludeHighRisk: workspacePolicy.excludeHighRisk,
-            minScore: workspacePolicy.minScore,
-            blockUnverified: workspacePolicy.blockUnverified,
-            allowRoleEmails: workspacePolicy.allowRoleEmails,
-            blockRisky: workspacePolicy.blockRisky,
-            blockUnknown: workspacePolicy.blockUnknown,
-          }
-        : {}),
-      ...(campaign?.verificationPolicy as VerificationPolicyConfig | undefined),
-      ...policies?.verificationPolicy,
-    };
+    const verificationPolicy = resolveVerificationPolicy(
+      workspacePolicy,
+      campaign?.verificationPolicy as VerificationPolicyConfig | undefined,
+      policies?.verificationPolicy,
+    );
 
     const suppressionPolicy = {
       respectWorkspaceSuppressions: true,
@@ -216,6 +205,7 @@ export class CampaignEligibilityService {
       reason: s.reason as 'MANUAL' | 'UNSUBSCRIBED' | 'BOUNCED' | 'SPAM_COMPLAINT' | 'INVALID' | 'RISKY',
     }));
 
+    const approvedLeadIds = new Set(policies?.approvedLeadIds ?? []);
     const requireQualification =
       (verificationPolicy as Record<string, unknown>).requireQualification === true;
 
@@ -226,8 +216,16 @@ export class CampaignEligibilityService {
         verificationPolicy,
         respectSuppressions: suppressionPolicy.respectWorkspaceSuppressions !== false,
         requireQualification,
+        approvedLeadIds,
       }),
     );
+    // Keep request order so review tables line up with what the user selected.
+    const order = new Map(leadIds.map((id, i) => [id, i]));
+    results.sort((a, b) => (order.get(a.leadId) ?? 0) - (order.get(b.leadId) ?? 0));
+    const review = results.filter((r) => !r.eligible && r.reviewable);
+    const needsVerification = results
+      .filter((r) => !r.verification || r.verification.stale)
+      .map((r) => r.leadId);
 
     const eligible = results.filter((r) => r.eligible);
     const alreadyEnrolled = results.filter((r) => r.reasons.includes('ALREADY_ENROLLED'));
@@ -247,7 +245,11 @@ export class CampaignEligibilityService {
         ineligible: ineligible.length,
         suppressed: suppressed.length,
         alreadyEnrolled: alreadyEnrolled.length,
+        review: review.length,
+        needsVerification: needsVerification.length,
       },
+      leads: results,
+      needsVerification,
     };
   }
 }

@@ -145,3 +145,4 @@ export {
   type ExecuteImportOptions,
   type PersistBatchResult,
 } from './import-processor.js';
+export { CATEGORY_DISPLAY_ORDER, CATEGORY_RULES, categorizeLead, sortCategoryBuckets } from './categorizer.js';

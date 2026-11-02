@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { JobsOptions, Queue } from 'bullmq';
 
 export interface EmailVerificationQueuePayload {
@@ -15,8 +16,14 @@ export const EMAIL_VERIFICATION_JOB_OPTIONS: JobsOptions = {
   removeOnFail: 1000,
 };
 
-function verificationJobId(payload: EmailVerificationQueuePayload): string {
-  return `email-verification-${payload.workspaceId}:${payload.email.toLowerCase()}:${payload.jobId}`;
+/**
+ * Deterministic per (job, email) id so a retried enqueue is deduplicated. The
+ * email is hashed: BullMQ rejects custom ids containing ':' and raw addresses
+ * can contain any printable character.
+ */
+export function verificationJobId(payload: Pick<EmailVerificationQueuePayload, 'jobId' | 'email'>): string {
+  const digest = createHash('sha1').update(payload.email.trim().toLowerCase()).digest('hex').slice(0, 20);
+  return `email-verification-${payload.jobId}-${digest}`;
 }
 
 export async function enqueueEmailVerification(

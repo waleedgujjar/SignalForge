@@ -38,10 +38,11 @@ function toDateOnly(usageDate: string): Date {
  * Atomically reserve one send unit for the mailbox on the given usage date.
  * - Idempotent by sendingJobId: an existing RESERVED/CONSUMED row for the same
  *   job returns immediately (reused=true) instead of double-incrementing.
- * - Enforces capacity: throws CapacityExhaustedError if
- *   sentCount + reservedCount would exceed dailyLimit.
- *   The mailbox row is upserted with reservedCount=1 (fresh) or conditionally
- *   incremented via a WHERE clause on (sentCount + reservedCount) < dailyLimit.
+ * - Enforces the account's daily limit across campaign AND warm-up sends:
+ *   throws CapacityExhaustedError unless
+ *   sentCount + reservedCount + warmupSentCount + warmupReservedCount < dailyLimit.
+ *   The check and the increment are one UPDATE statement, so concurrent
+ *   workers cannot both pass a check made against a stale read.
  */
 export async function reserveCapacity(input: ReserveCapacityInput): Promise<ReserveCapacityResult> {
   const usageDate = toDateOnly(input.usageDate);
@@ -56,29 +57,37 @@ export async function reserveCapacity(input: ReserveCapacityInput): Promise<Rese
 
     const usage = await tx.mailboxDailyUsage.upsert({
       where: { mailboxId_usageDate: { mailboxId: input.mailboxId, usageDate } },
-      create: { mailboxId: input.mailboxId, usageDate, sentCount: 0, reservedCount: 0 },
+      create: {
+        mailboxId: input.mailboxId,
+        usageDate,
+        sentCount: 0,
+        reservedCount: 0,
+        warmupSentCount: 0,
+        warmupReservedCount: 0,
+      },
       update: {},
     });
 
-    if (usage.sentCount + usage.reservedCount >= input.dailyLimit) {
+    const used = usage.sentCount + usage.reservedCount + usage.warmupSentCount + usage.warmupReservedCount;
+    if (used >= input.dailyLimit) {
       throw new CapacityExhaustedError(
         `Mailbox ${input.mailboxId} at limit (${input.dailyLimit})`,
       );
     }
 
-    const updated = await tx.mailboxDailyUsage.updateMany({
-      where: {
-        mailboxId: input.mailboxId,
-        usageDate,
-        // Conditional guard: only increment if capacity remains.
-        // We express (sent + reserved < limit) as reservedCount < (limit - sent).
-        reservedCount: { lt: input.dailyLimit - usage.sentCount },
-      },
-      data: { reservedCount: { increment: 1 } },
-    });
+    // Postgres re-evaluates the WHERE after taking the row lock, so this
+    // increments only if capacity still remains at that moment.
+    const updated = await tx.$executeRaw`
+      UPDATE "MailboxDailyUsage"
+         SET "reservedCount" = "reservedCount" + 1, "updatedAt" = NOW()
+       WHERE "mailboxId" = ${input.mailboxId}
+         AND "usageDate" = ${input.usageDate}::date
+         AND "sentCount" + "reservedCount" + "warmupSentCount" + "warmupReservedCount" < ${input.dailyLimit}`;
 
-    if (updated.count === 0) {
-      throw new ReservationConflictError('Concurrent update prevented reservation');
+    if (updated === 0) {
+      throw new CapacityExhaustedError(
+        `Mailbox ${input.mailboxId} reached its limit (${input.dailyLimit}) during reservation`,
+      );
     }
 
     if (existing) {

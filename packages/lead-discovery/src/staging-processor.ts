@@ -7,6 +7,7 @@ import {
   normalizeLead,
 } from './normalization.js';
 import { persistLeadBatch, type ProcessedImportRow } from './import-processor.js';
+import { categorizeLead, UNCATEGORIZED, type CategorizeInput, type CategoryResult } from './categorizer.js';
 
 // ─── Large Lead Data staging: mapping, cleaning, dedup, categorization ────────
 
@@ -18,6 +19,8 @@ export const STAGING_FIELDS = [
   'website',
   'email',
   'phone',
+  /** Free-text tags/services. Used for categorization; the raw row keeps the original. */
+  'keywords',
 ] as const;
 export type StagingField = (typeof STAGING_FIELDS)[number];
 
@@ -58,6 +61,16 @@ const STAGING_ALIASES: Record<string, StagingField> = {
   niche: 'category',
   'business type': 'category',
   'company category': 'category',
+  // keywords
+  keywords: 'keywords',
+  keyword: 'keywords',
+  tags: 'keywords',
+  services: 'keywords',
+  specialties: 'keywords',
+  specialities: 'keywords',
+  hashtags: 'keywords',
+  'business keywords': 'keywords',
+  'industry tags': 'keywords',
   // website
   website: 'website',
   'web site': 'website',
@@ -197,72 +210,11 @@ const PLATFORM_DOMAINS = new Set([
   'goo.gl',
 ]);
 
-export interface CategoryResult {
-  category: string;
-  confidence: number;
-  reason: string;
-}
+export { UNCATEGORIZED, type CategoryResult } from './categorizer.js';
 
-const CATEGORY_RULES: Array<{ category: string; keywords: string[] }> = [
-  { category: 'Photography', keywords: ['photograph', 'photo studio', 'fotograf', 'photoshoot'] },
-  { category: 'Videography', keywords: ['videograph', 'video production', 'filmmaker', 'film maker'] },
-  { category: 'Software & SaaS', keywords: ['software', 'saas', 'web develop', 'app develop', 'tech company', 'it services', 'developer'] },
-  { category: 'Marketing & Advertising', keywords: ['marketing', 'seo ', ' seo', 'advertis', 'social media manag', 'growth agency', 'media agency', 'digital agency'] },
-  { category: 'Design', keywords: ['graphic design', 'ui/ux', 'ux design', 'branding', 'web design', 'interior design', 'designer'] },
-  { category: 'Consulting & Coaching', keywords: ['consult', 'coach', 'mentor', 'advisor'] },
-  { category: 'Real Estate', keywords: ['real estate', 'realtor', 'realty', 'property manag', 'properties'] },
-  { category: 'Food & Beverage', keywords: ['restaurant', 'cafe', 'coffee', 'bakery', 'catering', 'food truck', 'pizzeria', 'bar & grill'] },
-  { category: 'Health & Fitness', keywords: ['fitness', ' gym', 'gym ', 'personal trainer', 'yoga', 'pilates', 'wellness', 'nutrition', 'physiotherap', 'chiropract'] },
-  { category: 'Beauty & Salon', keywords: ['salon', 'beauty', 'makeup', 'hairstyl', 'hair studio', ' spa', 'spa ', 'nails', 'barber', 'lashes', 'esthetic'] },
-  { category: 'Medical & Dental', keywords: ['dental', 'dentist', 'clinic', 'medical', 'dermatolog', 'pediatric', 'veterinar'] },
-  { category: 'Legal', keywords: ['law firm', 'attorney', 'lawyer', 'legal services'] },
-  { category: 'Finance & Accounting', keywords: ['accounting', 'accountant', 'bookkeep', 'financial', 'tax service', 'insurance', 'mortgage'] },
-  { category: 'Construction & Home Services', keywords: ['construction', 'contractor', 'plumb', 'roofing', 'hvac', 'electrician', 'landscap', 'cleaning service', 'remodel', 'painting'] },
-  { category: 'Automotive', keywords: ['automotive', 'car dealer', 'auto repair', 'auto detail', 'car wash', 'mechanic'] },
-  { category: 'E-commerce & Retail', keywords: ['e-commerce', 'ecommerce', 'online store', 'boutique', 'shopify', 'retail', 'clothing brand', 'apparel'] },
-  { category: 'Education', keywords: ['school', 'academy', 'tutor', 'education', 'university', 'learning center', 'courses'] },
-  { category: 'Travel & Hospitality', keywords: ['travel', 'hotel', 'tour ', 'tours', 'hospitality', 'resort', 'airbnb'] },
-  { category: 'Events & Entertainment', keywords: ['wedding', 'event plann', ' dj ', 'entertainment', 'music', 'band', 'artist'] },
-  { category: 'Nonprofit', keywords: ['nonprofit', 'non-profit', 'charity', 'foundation', 'ngo'] },
-];
-
-export const UNCATEGORIZED = 'Uncategorized';
-
-function cleanProvidedCategory(value: string): string {
-  const cleaned = value.trim().replace(/\s+/g, ' ').slice(0, 60);
-  return cleaned
-    .toLowerCase()
-    .split(' ')
-    .map((w) => (w ? w[0]!.toUpperCase() + w.slice(1) : w))
-    .join(' ');
-}
-
-export function categorizeStagedLead(input: {
-  category?: string | null;
-  bio?: string | null;
-  name?: string | null;
-  website?: string | null;
-  username?: string | null;
-}): CategoryResult {
-  const provided = input.category?.trim();
-  if (provided) {
-    return { category: cleanProvidedCategory(provided), confidence: 1, reason: 'provided in file' };
-  }
-
-  const haystack = ` ${[input.bio, input.name, input.website, input.username]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase()} `;
-  if (haystack.trim()) {
-    for (const rule of CATEGORY_RULES) {
-      const hit = rule.keywords.find((kw) => haystack.includes(kw));
-      if (hit) {
-        return { category: rule.category, confidence: 0.7, reason: `matched "${hit.trim()}"` };
-      }
-    }
-  }
-
-  return { category: UNCATEGORIZED, confidence: 0, reason: 'insufficient evidence' };
+/** Categorizes one staged row; see categorizer.ts for the scoring rules. */
+export function categorizeStagedLead(input: CategorizeInput): CategoryResult {
+  return categorizeLead(input);
 }
 
 export interface StagedLeadFilter {
@@ -297,6 +249,9 @@ export function buildStagedLeadWhere(
       { name: contains },
       { email: contains },
       { website: contains },
+      { bio: contains },
+      { category: contains },
+      { assignedCategory: contains },
     ];
     where.AND = [{ OR: search }];
   }
@@ -325,6 +280,7 @@ export function buildStagedLeadData(
   const websiteRaw = value('website');
   const email = value('email');
   const phone = value('phone');
+  const keywords = value('keywords');
 
   const normalizedEmail = normalizeEmail(email);
   const normalizedPhone = normalizePhone(phone);
@@ -334,7 +290,7 @@ export function buildStagedLeadData(
   const normalizedUsername = normalizeUsername(username);
 
   const hasIdentity = Boolean(normalizedEmail || normalizedPhone || normalizedUsername || websiteDomain || name);
-  const categorized = categorizeStagedLead({ category, bio, name, website, username });
+  const categorized = categorizeStagedLead({ category, keywords, bio, name, website: websiteRaw, username });
 
   return {
     datasetId: context.datasetId,

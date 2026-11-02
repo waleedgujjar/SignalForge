@@ -369,6 +369,7 @@ export const campaignRoutes: FastifyPluginAsync = async (app) => {
           leadIds: body.leadIds,
           actorUserId,
           force: body.force,
+          approvedLeadIds: body.approvedLeadIds,
           source: 'api',
         });
         return reply.status(202).send({
@@ -381,6 +382,7 @@ export const campaignRoutes: FastifyPluginAsync = async (app) => {
       const result = await campaignLeadService.enrollLeads(id, workspaceId, body.leadIds, {
         actorUserId,
         force: body.force,
+        approvedLeadIds: body.approvedLeadIds,
       });
       return result;
     } catch (error) {

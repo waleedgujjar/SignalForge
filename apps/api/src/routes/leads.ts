@@ -20,6 +20,7 @@ import {
 } from '@signalforge/validation';
 import { requireWorkspaceGuard, getWorkspaceId } from '../plugins/auth.js';
 import { verificationJobService } from '@signalforge/verification';
+import { VERIFICATION_VERSION, verificationCacheTtlMs } from '@signalforge/email';
 import { isLinkedInResearchEnabled, leadResearchService } from '@signalforge/lead-research';
 import { isPlaceholderEmail } from '@signalforge/lead-discovery';
 import { processImportRows, executeImportRows } from '../services/lead-import-processor.js';
@@ -97,8 +98,14 @@ export const leadRoutes: FastifyPluginAsync = async (app) => {
       where.state = { contains: query.state, mode: 'insensitive' };
     if (query.city)
       where.city = { contains: query.city, mode: 'insensitive' };
-    if (query.verificationStatus)
+    if (query.verificationStatus === 'UNVERIFIED') {
+      where.verification = { is: null };
+    } else if (query.verificationStatus === 'NEEDS_VERIFICATION') {
+      // AND-wrapped so the search filter's own OR below cannot overwrite it.
+      where.AND = [...(Array.isArray(where.AND) ? where.AND : []), { OR: needsVerificationFilter() }];
+    } else if (query.verificationStatus) {
       where.verification = { status: query.verificationStatus };
+    }
     if (query.campaignId)
       where.campaignLeads = { some: { campaignId: query.campaignId } };
     if (query.tagId) where.tags = { some: { tagId: query.tagId } };
@@ -701,3 +708,17 @@ export const leadRoutes: FastifyPluginAsync = async (app) => {
     return reply.status(204).send();
   });
 };
+
+/** Leads whose verification is missing, from an older engine, or past its TTL. */
+function needsVerificationFilter() {
+  const now = Date.now();
+  const fullCutoff = new Date(now - verificationCacheTtlMs('VERIFIED'));
+  const transientCutoff = new Date(now - verificationCacheTtlMs('UNKNOWN'));
+  return [
+    { verification: { is: null } },
+    { verification: { verificationVersion: { not: VERIFICATION_VERSION } } },
+    { verification: { verifiedAt: null } },
+    { verification: { verifiedAt: { lt: fullCutoff } } },
+    { verification: { status: 'UNKNOWN' as const, verifiedAt: { lt: transientCutoff } } },
+  ];
+}

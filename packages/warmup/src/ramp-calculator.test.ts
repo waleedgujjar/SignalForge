@@ -77,3 +77,22 @@ describe('isWarmupComplete', () => {
     expect(isWarmupComplete(49, 50)).toBe(false);
   });
 });
+
+describe('computeCurrentLimit — after a hold', () => {
+  it('keeps progressing when the time-based target reached the cap but the real limit did not', async () => {
+    const { computeCurrentLimit } = await import('./ramp-calculator.js');
+    const start = new Date('2026-01-01T00:00:00Z');
+    const result = computeCurrentLimit({
+      startingDailyLimit: 5,
+      maximumDailyLimit: 30,
+      rampStep: 5,
+      rampIntervalHours: 24,
+      startDate: start,
+      // Held for weeks: elapsed time alone says "at cap", the limit is still 10.
+      lastProgressionAt: new Date('2026-01-03T00:00:00Z'),
+      now: new Date('2026-02-01T00:00:00Z'),
+      currentLimit: 10,
+    });
+    expect(result.shouldProgress).toBe(true);
+  });
+});

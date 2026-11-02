@@ -1,6 +1,9 @@
 import { checkSuppression, type SuppressionEntry } from './suppression-engine.js';
-import type { VerificationResult } from './verification-service.js';
-import { shouldExcludeByVerification } from './verification/eligibility.js';
+import {
+  shouldExcludeByVerification,
+  type VerificationEligibilityPolicy,
+  type VerificationLike,
+} from './verification/eligibility.js';
 import { selectMailbox, type MailboxCandidate, type RotationStrategy } from './rotation-engine.js';
 import { resolveVariables, type LeadVariableContext } from './variable-resolver.js';
 import { parseSpintax } from './spintax-parser.js';
@@ -25,17 +28,8 @@ export interface PolicyCheckInput {
   bodyTemplate: string;
   variableContext: LeadVariableContext;
   suppressions: SuppressionEntry[];
-  verification?: VerificationResult | null;
-  verificationPolicy?: {
-    excludeInvalid?: boolean;
-    excludeDisposable?: boolean;
-    excludeHighRisk?: boolean;
-    minScore?: number;
-    blockUnverified?: boolean;
-    allowRoleEmails?: boolean;
-    blockRisky?: boolean;
-    blockUnknown?: boolean;
-  };
+  verification?: VerificationLike | null;
+  verificationPolicy?: VerificationEligibilityPolicy;
   mailboxes: MailboxCandidate[];
   rotationStrategy: RotationStrategy;
   sendingWindow?: SendingWindowConfig;
@@ -76,33 +70,7 @@ export function evaluateSendingPolicy(input: PolicyCheckInput): PolicyCheckResul
   }
 
   if (input.verificationPolicy) {
-    const fullVerification = input.verification
-      ? ({
-          ...input.verification,
-          originalEmail: input.verification.email,
-          normalizedEmail: input.verification.email.toLowerCase(),
-          riskScore: (input.verification as VerificationResult).riskScore ?? 0,
-          riskLevel: (input.verification as VerificationResult).riskLevel ?? 'LOW',
-          confidenceScore: (input.verification as VerificationResult).confidenceScore ?? 0,
-          reasonCode: (input.verification as VerificationResult).reasonCode ?? '',
-          syntaxValid: true,
-          domainValid: true,
-          dnsResolved: true,
-          mxFound: true,
-          mxRecords: [],
-          smtpStatus: 'SKIPPED',
-          isDisposable: input.verification.status === 'DISPOSABLE',
-          isRole: input.verification.status === 'ROLE_BASED',
-          roleType: null,
-          isCatchAll: false,
-          providerType: 'UNKNOWN',
-          verificationMethod: 'LOCAL',
-          riskFactors: [],
-          verificationVersion: 'v1',
-        } as VerificationResult)
-      : null;
-
-    const exclusion = shouldExcludeByVerification(fullVerification, input.verificationPolicy);
+    const exclusion = shouldExcludeByVerification(input.verification, input.verificationPolicy);
     if (exclusion.excluded) {
       return {
         decision: 'BLOCK_SEND',

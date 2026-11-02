@@ -10,7 +10,7 @@ export class CampaignLeadService {
     campaignId: string,
     workspaceId: string,
     leadIds: string[],
-    options?: { actorUserId?: string; force?: boolean },
+    options?: { actorUserId?: string; force?: boolean; approvedLeadIds?: string[] },
   ) {
     const campaign = await prisma.campaign.findFirst({
       where: { id: campaignId, workspaceId },
@@ -36,28 +36,27 @@ export class CampaignLeadService {
       workspaceId,
       campaignId,
       validLeadIds,
+      { approvedLeadIds: options?.approvedLeadIds },
     );
 
-    const policy = campaign.duplicateEnrollmentPolicy;
-    let toEnroll = eligibility.eligible.map((r) => r.leadId);
-
-    if (policy === 'ALLOW') {
-      toEnroll = validLeadIds.filter(
-        (id) => !eligibility.alreadyEnrolled.some((r) => r.leadId === id),
-      );
-    } else if (policy === 'WARN' && options?.force) {
-      toEnroll = validLeadIds.filter(
-        (id) =>
-          !eligibility.alreadyEnrolled.some((r) => r.leadId === id) &&
-          !eligibility.ineligible.some(
-            (r) => r.leadId === id && !r.reasons.includes('ALREADY_ENROLLED'),
-          ),
-      );
-    }
+    // Only eligible leads are enrolled, whatever the duplicate-enrollment
+    // policy. That policy decides whether a partially ineligible batch is
+    // rejected outright (BLOCK, enforced by the route), never whether
+    // suppression, unsubscribe or verification checks apply. Leads already in
+    // this campaign are never eligible, and (campaignId, leadId) is unique.
+    const toEnroll = eligibility.eligible.map((r) => r.leadId);
+    const approved = new Set(eligibility.eligible.filter((r) => r.reviewApproved).map((r) => r.leadId));
+    const approvedAt = new Date();
 
     if (toEnroll.length > 0) {
       await prisma.campaignLead.createMany({
-        data: toEnroll.map((leadId) => ({ campaignId, leadId })),
+        data: toEnroll.map((leadId) => ({
+          campaignId,
+          leadId,
+          ...(approved.has(leadId)
+            ? { verificationApprovedAt: approvedAt, verificationApprovedById: options?.actorUserId ?? null }
+            : {}),
+        })),
         skipDuplicates: true,
       });
 
@@ -67,7 +66,7 @@ export class CampaignLeadService {
         type: 'LEADS_ADDED',
         summary: `Enrolled ${toEnroll.length} lead(s)`,
         actorUserId: options?.actorUserId,
-        metadata: { leadIds: toEnroll, count: toEnroll.length },
+        metadata: { leadIds: toEnroll, count: toEnroll.length, reviewApproved: [...approved] },
       });
     }
 

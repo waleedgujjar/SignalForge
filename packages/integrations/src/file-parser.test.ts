@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { Readable } from 'node:stream';
 import * as SheetJS from 'xlsx';
-import { parseFileStream, FileParseError } from './file-parser.js';
+import { parseFileStream, FileParseError, finalizeHeaders } from './file-parser.js';
+import { detectColumnMappings } from './column-detector.js';
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const streamOf = (text: string) => Readable.from(Buffer.from(text, 'utf8'));
@@ -86,5 +87,38 @@ describe('parseFileStream — legacy .xls', () => {
       filename: 'export.xls',
     });
     expect(result.rows[0]).toMatchObject({ Name: 'Gina', Email: 'gina@example.com' });
+  });
+});
+
+describe('parseFileStream — header hygiene', () => {
+  function workbook(rows: (string | null)[][], bookType: 'xlsx' | 'xls'): Buffer {
+    const wb = SheetJS.utils.book_new();
+    SheetJS.utils.book_append_sheet(wb, SheetJS.utils.aoa_to_sheet(rows), 'Sheet1');
+    return SheetJS.write(wb, { type: 'buffer', bookType }) as Buffer;
+  }
+
+  it('names a blank .xlsx header cell instead of leaving a hole that crashes column detection', async () => {
+    const buf = workbook([[null, 'Email', 'Company'], ['1', 'a@acme.com', 'Acme']], 'xlsx');
+    const result = await parseFileStream(Readable.from(buf), XLSX_MIME, { filename: 'leads.xlsx' });
+    expect(result.headers).toEqual(['Column 1', 'Email', 'Company']);
+    expect(() => detectColumnMappings(result.headers)).not.toThrow();
+    expect(result.rows[0]).toMatchObject({ 'Column 1': '1', Email: 'a@acme.com' });
+  });
+
+  it('keeps both columns when a header name repeats', async () => {
+    const result = await parseFileStream(streamOf('Email,Name,Email\na@x.com,A,b@x.com\n'), 'text/csv');
+    expect(result.headers).toEqual(['Email', 'Name', 'Email 2']);
+  });
+
+  it('parses a binary .xls sent with the Windows vnd.ms-excel MIME when the filename is passed', async () => {
+    const buf = workbook([['Email'], ['a@acme.com']], 'xls');
+    const result = await parseFileStream(Readable.from(buf), 'application/vnd.ms-excel', { filename: 'old.xls' });
+    expect(result.headers).toEqual(['Email']);
+    expect(result.rows).toEqual([{ Email: 'a@acme.com' }]);
+  });
+
+  it('finalizeHeaders fills gaps, strips NUL bytes and dedupes case-insensitively', () => {
+    // eslint-disable-next-line no-sparse-arrays
+    expect(finalizeHeaders([, 'Email', 'email', 'Na\u0000me', ''])).toEqual(['Column 1', 'Email', 'email 2', 'Name', 'Column 5']);
   });
 });

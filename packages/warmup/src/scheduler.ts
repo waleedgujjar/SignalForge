@@ -186,6 +186,7 @@ export class WarmupSchedulerService {
         lastProgressionAt: config.lastProgressionAt,
         now,
         holdRamp,
+        currentLimit: config.currentDailyLimit,
       });
 
       if (isWarmupComplete(config.currentDailyLimit, config.maximumDailyLimit)) {
@@ -262,10 +263,23 @@ export class WarmupSchedulerService {
         };
         if (!isWithinWarmupWindow(now, scheduleConfig)) {
           const nextOpen = nextWindowOpen(now, scheduleConfig);
-          await warmupJobService.markDeferred(job.id, {
-            reason: 'OUTSIDE_SENDING_WINDOW',
-            nextScheduledAt: nextOpen,
-          });
+          const sameDay =
+            DateTime.fromJSDate(nextOpen, { zone: timezone }).toISODate() === job.usageDate.toISOString().slice(0, 10);
+          if (sameDay) {
+            // The window opens later today: keep the slot queued for then. (A
+            // DEFERRED status here was never dispatched again.)
+            await prisma.warmupJob.update({
+              where: { id: job.id },
+              data: { scheduledAt: nextOpen, lastError: 'OUTSIDE_SENDING_WINDOW' },
+            });
+          } else {
+            // Today's window is over. Tomorrow plans its own slots, so moving
+            // this one would double tomorrow's volume.
+            await warmupJobService.markDeferred(job.id, {
+              reason: 'SENDING_WINDOW_CLOSED_FOR_DAY',
+              nextScheduledAt: null,
+            });
+          }
           deferred += 1;
           continue;
         }

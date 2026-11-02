@@ -64,6 +64,12 @@ vi.mock('@signalforge/database', () => ({
       },
     },
     warmupJob: {
+      update: async ({ where, data }: { where: { id: string }; data: Partial<WarmupJobRow> }) => {
+        const row = warmupJobs.find((j) => j.id === where.id);
+        if (!row) throw new Error('not found');
+        Object.assign(row, data);
+        return row;
+      },
       findMany: async ({ where }: { where: { mailboxId: string; usageDate: Date } }) => {
         return warmupJobs.filter(
           (j) =>
@@ -327,5 +333,34 @@ describe('WarmupSchedulerService.dispatchDueWarmupJobs', () => {
     expect(result.dispatched).toBe(0);
     expect(result.deferred).toBe(1);
     expect(enqueuedPayloads).toHaveLength(0);
+    // The window opens later the same day, so the slot stays queued for 09:00
+    // instead of becoming a DEFERRED job that is never dispatched again.
+    expect(warmupJobs[0]).toMatchObject({ status: 'QUEUED', scheduledAt: new Date('2026-01-05T09:00:00Z') });
+  });
+
+  it('closes the slot when the day\'s window is already over', async () => {
+    const { WarmupSchedulerService } = await import('./scheduler.js');
+    const scheduler = new WarmupSchedulerService(fakeQueue as Queue, fakeRecipientProvider);
+    const usageDate = new Date('2026-01-05T00:00:00Z');
+    warmupJobs.push({
+      id: 'wj_late',
+      mailboxId: 'mb_1',
+      usageDate,
+      slotIndex: 1,
+      scheduledAt: new Date('2026-01-05T18:00:00Z'),
+      status: 'QUEUED',
+      workspaceId: 'ws_1',
+      configId: 'cfg_1',
+    });
+    const { prisma } = (await import('@signalforge/database')) as unknown as {
+      prisma: { warmupJob: { findMany: (args: unknown) => Promise<unknown[]> } };
+    };
+    const late = warmupJobs.find((j) => j.id === 'wj_late')!;
+    prisma.warmupJob.findMany = async () => [{ ...late, config: baseConfig(), mailbox: baseConfig().mailbox }];
+
+    const result = await scheduler.dispatchDueWarmupJobs(new Date('2026-01-05T18:00:00Z'));
+    expect(result).toMatchObject({ dispatched: 0, deferred: 1 });
+    // Not moved into tomorrow, which plans its own slots.
+    expect(late.scheduledAt).toEqual(new Date('2026-01-05T18:00:00Z'));
   });
 });

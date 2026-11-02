@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { loadEnv } from '@signalforge/config';
 import { prisma } from '@signalforge/database';
-import { detectColumnMappings, parseFileStream } from '@signalforge/integrations';
+import { parseFileStream } from '@signalforge/integrations';
 import {
   emailVerificationService,
   verificationJobService,
@@ -9,17 +9,19 @@ import {
   type VerificationExportRow,
 } from '@signalforge/verification';
 import { publishWorkflowEvent } from '@signalforge/automations';
+import { resolveVerificationPolicy } from '@signalforge/email';
 import {
   bulkVerifySchema,
   updateVerificationPolicySchema,
-  verificationExcelSchema,
   verificationHistoryQuerySchema,
   verificationJobListQuerySchema,
   verifyEmailSchema,
 } from '@signalforge/validation';
-import { Readable } from 'node:stream';
+import { createReadStream } from 'node:fs';
+import { access } from 'node:fs/promises';
 
 import { getWorkspaceId, requireWorkspaceGuard, requireWorkspaceRole } from '../plugins/auth.js';
+import { extractEmail } from './verification-upload.js';
 
 function getActorUserId(request: { user?: { userId?: string } }): string | undefined {
   return request.user?.userId;
@@ -28,6 +30,7 @@ function getActorUserId(request: { user?: { userId?: string } }): string | undef
 function verificationStatusLabel(status: string): string {
   if (status === 'VERIFIED') return 'Valid';
   if (status === 'ROLE_BASED') return 'Role';
+  if (status === 'CATCH_ALL') return 'Catch-all';
   return status;
 }
 
@@ -185,16 +188,7 @@ export const verificationRoutes: FastifyPluginAsync = async (app) => {
   app.get('/policy', async (request) => {
     const workspaceId = getWorkspaceId(request);
     const policy = await prisma.workspaceVerificationPolicy.findFirst({ where: { workspaceId } });
-    return policy ?? {
-      excludeInvalid: true,
-      excludeDisposable: true,
-      excludeHighRisk: true,
-      minScore: 50,
-      blockUnverified: true,
-      allowRoleEmails: false,
-      blockRisky: true,
-      blockUnknown: true,
-    };
+    return { ...resolveVerificationPolicy(policy), ...(policy ?? {}) };
   });
 
   app.patch('/policy', { preHandler: requireWorkspaceRole('ADMIN').preHandler }, async (request) => {
@@ -208,42 +202,6 @@ export const verificationRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
-  app.post('/excel', async (request) => {
-    const workspaceId = getWorkspaceId(request);
-    const body = verificationExcelSchema.parse(request.body);
-    const buffer = Buffer.from(body.file.data, 'base64');
-    const parsed = await parseFileStream(Readable.from(buffer), body.file.mimeType);
-    const mappings = detectColumnMappings(parsed.headers);
-    const emailColumn =
-      body.emailColumn ??
-      mappings.find((mapping) => mapping.leadField === 'email')?.csvColumn ??
-      parsed.headers.find((header) => header.toLowerCase().includes('email'));
-
-    if (!emailColumn) {
-      throw new Error('Could not detect email column. Specify emailColumn explicitly.');
-    }
-
-    const emails = parsed.rows
-      .map((row) => row[emailColumn]?.trim())
-      .filter((email): email is string => Boolean(email && email.includes('@')));
-
-    const job = await verificationJobService.createJob({
-      workspaceId,
-      initiatedByUserId: getActorUserId(request),
-      source: 'EXCEL',
-      name: body.name ?? body.file.filename ?? 'Excel verification',
-      emails,
-      metadata: {
-        emailColumn,
-        headers: parsed.headers,
-        rows: parsed.rows,
-        originalFilename: body.file.filename,
-      },
-    });
-
-    return { jobId: job.id, status: job.status, total: job.total, emailColumn };
-  });
-
   app.get('/export/:jobId', async (request, reply) => {
     const workspaceId = getWorkspaceId(request);
     const { jobId } = request.params as { jobId: string };
@@ -255,29 +213,46 @@ export const verificationRoutes: FastifyPluginAsync = async (app) => {
       headers?: string[];
       rows?: Record<string, string>[];
       emailColumn?: string;
+      filePath?: string;
+      mimeType?: string;
+      originalFilename?: string | null;
     };
 
     const history = await prisma.emailVerificationHistory.findMany({
       where: { workspaceId, jobId },
+      orderBy: { checkedAt: 'asc' },
     });
-    const byEmail = new Map(history.map((entry) => [entry.normalizedEmail, entry]));
+    const byEmail = new Map(history.map((entry) => [entry.normalizedEmail.toLowerCase(), entry]));
 
-    const headers = metadata.headers ?? ['email'];
-    const emailColumn = metadata.emailColumn ?? 'email';
-    const sourceRows = metadata.rows ?? [];
+    let headers = metadata.headers ?? ['email'];
+    let emailColumn = metadata.emailColumn ?? 'email';
+    let sourceRows: Record<string, string>[] = metadata.rows ?? [];
+    if (metadata.filePath && (await fileExists(metadata.filePath))) {
+      // Re-read the uploaded file so the export keeps every original column.
+      const parsed = await parseFileStream(createReadStream(metadata.filePath), metadata.mimeType ?? 'text/csv', {
+        filename: metadata.originalFilename ?? undefined,
+      });
+      sourceRows = parsed.rows;
+      headers = parsed.headers;
+    } else if (sourceRows.length === 0) {
+      // Pasted lists, or a file that is no longer on disk: export the results alone.
+      headers = ['email'];
+      emailColumn = 'email';
+      sourceRows = history.map((entry) => ({ email: entry.email }));
+    }
 
     const exportRows: VerificationExportRow[] = sourceRows.map((row) => {
-      const email = row[emailColumn]?.trim().toLowerCase() ?? '';
+      const email = extractEmail(row[emailColumn]) ?? '';
       const entry = email ? byEmail.get(email) : undefined;
       return {
         ...row,
-        email_verification_status: entry?.status ?? '',
+        email_verification_status: entry ? verificationStatusLabel(entry.status) : '',
         email_risk_score: entry?.riskScore ?? null,
         email_confidence_score: entry?.confidenceScore ?? null,
         email_verification_reason: entry?.reasonMessage ?? null,
-        email_is_disposable: entry?.status === 'DISPOSABLE' ? true : null,
-        email_is_role: entry?.status === 'ROLE_BASED' ? true : null,
-        email_is_catch_all: entry?.status === 'RISKY' ? true : null,
+        email_is_disposable: entry ? entry.status === 'DISPOSABLE' : null,
+        email_is_role: entry ? entry.status === 'ROLE_BASED' : null,
+        email_is_catch_all: entry ? entry.status === 'CATCH_ALL' : null,
       };
     });
 
@@ -333,3 +308,12 @@ export const verificationRoutes: FastifyPluginAsync = async (app) => {
     return { ...result, statusLabel: verificationStatusLabel(result.status) };
   });
 };
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}

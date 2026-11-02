@@ -24,7 +24,10 @@ async function startWorker() {
 
   const worker = new Worker<EmailVerificationJobData>(
     QUEUE_NAMES.EMAIL_VERIFICATION,
-    async (job) => processEmailVerificationJob(job.data),
+    async (job) =>
+      processEmailVerificationJob(job.data, {
+        finalAttempt: job.attemptsMade + 1 >= (job.opts.attempts ?? 1),
+      }),
     { connection, concurrency },
   );
 

@@ -26,6 +26,7 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { VerificationStatusBadge } from '@/components/verification/status-badge';
+import { VerificationEvidence } from '@/components/verification/verification-evidence';
 import { ConfidenceBadge } from '@/components/research/confidence-badge';
 import { VerificationBadge } from '@/components/research/verification-badge';
 import { ResearchSection } from '@/components/research/research-section';
@@ -526,13 +527,25 @@ export default function LeadDetailPage() {
                   <dd className="mt-0.5 space-y-2">
                     {lead.verification ? (
                       <>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <VerificationStatusBadge status={lead.verification.status} />
-                          <span className="text-xs text-muted-foreground">Score {lead.verification.score}</span>
+                          <span className="text-xs text-muted-foreground">
+                            Confidence {lead.verification.confidenceScore ?? lead.verification.score}
+                            {lead.verification.riskLevel ? ` · ${lead.verification.riskLevel.toLowerCase().replace('_', ' ')} risk` : ''}
+                          </span>
                         </div>
                         {lead.verification.reason && (
                           <p className="text-xs text-muted-foreground">{lead.verification.reason}</p>
                         )}
+                        {lead.verification.verifiedAt ? (
+                          <p className="text-xs text-muted-foreground">
+                            Last verified {new Date(lead.verification.verifiedAt).toLocaleString()}
+                          </p>
+                        ) : null}
+                        <VerificationEvidence
+                          checks={lead.verification.checks}
+                          smtpResponse={lead.verification.smtpResponse}
+                        />
                         <Button
                           variant="outline"
                           size="sm"
