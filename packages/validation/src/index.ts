@@ -519,7 +519,7 @@ export const leadListQuerySchema = z.object({
   enrichmentStatus: z.enum(['NOT_ENRICHED', 'QUEUED', 'ENRICHING', 'COMPLETED', 'PARTIAL', 'FAILED']).optional(),
   prospectPriority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'VERY_HIGH']).optional(),
   minProspectScore: z.coerce.number().int().min(0).max(100).optional(),
-  sortBy: z.enum(['createdAt', 'email', 'firstName', 'fullName', 'company', 'phone', 'website', 'status', 'prospectScore']).default('createdAt'),
+  sortBy: z.enum(['createdAt', 'email', 'firstName', 'fullName', 'company', 'phone', 'website', 'status', 'prospectScore', 'category']).default('createdAt'),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(20),

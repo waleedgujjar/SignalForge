@@ -27,6 +27,7 @@ import {
   isPlaceholderEmail,
   categorizeLead,
   sortCategoryBuckets,
+  CATEGORY_DISPLAY_ORDER,
   LOCAL_BUSINESS_CATEGORIES,
   OTHER,
 } from '@signalforge/lead-discovery';
@@ -146,20 +147,53 @@ export const leadRoutes: FastifyPluginAsync = async (app) => {
       ];
     }
 
-    const orderBy = query.sortBy === 'prospectScore'
-      ? { enrichment: { prospectScore: query.sortOrder } }
-      : { [query.sortBy]: query.sortOrder };
+    let leads: Awaited<ReturnType<typeof prisma.lead.findMany>>;
+    let total: number;
 
-    const [leads, total] = await Promise.all([
-      prisma.lead.findMany({
+    if (query.sortBy === 'category') {
+      // Group leads by the fixed category priority order (CATEGORY_DISPLAY_ORDER,
+      // then Other/uncategorized last). Prisma can't ORDER BY a custom sequence,
+      // so rank in the app: fetch the matching ids+category (a light select),
+      // order them, page, then load the page's full rows. Works with every
+      // filter above because the same `where` does the filtering.
+      const matches = await prisma.lead.findMany({
         where,
-        skip: (query.page - 1) * query.limit,
-        take: query.limit,
-        orderBy,
-        include: LEAD_INCLUDE,
-      }),
-      prisma.lead.count({ where }),
-    ]);
+        select: { id: true, category: true, createdAt: true },
+      });
+      const rankOf = (c: string | null) => {
+        if (!c || c === OTHER) return CATEGORY_DISPLAY_ORDER.length + 1;
+        const i = CATEGORY_DISPLAY_ORDER.indexOf(c);
+        return i === -1 ? CATEGORY_DISPLAY_ORDER.length : i; // custom labels just before Other
+      };
+      const dir = query.sortOrder === 'asc' ? 1 : -1;
+      matches.sort(
+        (a, b) =>
+          dir * (rankOf(a.category) - rankOf(b.category)) ||
+          // Newest first within a category, regardless of the group direction.
+          b.createdAt.getTime() - a.createdAt.getTime(),
+      );
+      total = matches.length;
+      const pageIds = matches
+        .slice((query.page - 1) * query.limit, query.page * query.limit)
+        .map((m) => m.id);
+      const rows = await prisma.lead.findMany({ where: { id: { in: pageIds } }, include: LEAD_INCLUDE });
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      leads = pageIds.map((id) => byId.get(id)!).filter(Boolean);
+    } else {
+      const orderBy = query.sortBy === 'prospectScore'
+        ? { enrichment: { prospectScore: query.sortOrder } }
+        : { [query.sortBy]: query.sortOrder };
+      [leads, total] = await Promise.all([
+        prisma.lead.findMany({
+          where,
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+          orderBy,
+          include: LEAD_INCLUDE,
+        }),
+        prisma.lead.count({ where }),
+      ]);
+    }
 
     return {
       data: leads,
