@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { classifyRcptReply } from './smtp-verifier.js';
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  classifyRcptReply,
+  isSmtpUnavailable,
+  noteReachable,
+  noteUnreachable,
+  resetSmtpStateForTests,
+} from './smtp-verifier.js';
 
 describe('classifyRcptReply', () => {
   it.each([
@@ -21,5 +27,34 @@ describe('classifyRcptReply', () => {
     [550, 'Requested action not taken', 'UNKNOWN'],
   ] as const)('%i %s -> %s', (code, text, expected) => {
     expect(classifyRcptReply({ code, text })).toBe(expected);
+  });
+});
+
+describe('port 25 circuit breaker', () => {
+  beforeEach(() => resetSmtpStateForTests());
+
+  it('trips when several hosts fail and none has answered (port blocked)', () => {
+    for (const host of ['a.mx', 'b.mx', 'c.mx', 'd.mx']) noteUnreachable(host);
+    expect(isSmtpUnavailable()).toBe(false);
+    noteUnreachable('e.mx');
+    expect(isSmtpUnavailable()).toBe(true);
+  });
+
+  it('never trips while another mail server has answered recently', () => {
+    // e.g. Gmail answered, then a batch of slow small-business hosts timed out.
+    noteReachable();
+    for (let i = 0; i < 20; i++) noteUnreachable(`slow${i}.mx`);
+    expect(isSmtpUnavailable()).toBe(false);
+  });
+
+  it('trips again once the last success is old', () => {
+    noteReachable(Date.now() - 31 * 60 * 1000);
+    for (let i = 0; i < 5; i++) noteUnreachable(`h${i}.mx`);
+    expect(isSmtpUnavailable()).toBe(true);
+  });
+
+  it('counts the same host once', () => {
+    for (let i = 0; i < 10; i++) noteUnreachable('same.mx');
+    expect(isSmtpUnavailable()).toBe(false);
   });
 });

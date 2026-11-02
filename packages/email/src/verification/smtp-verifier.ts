@@ -37,10 +37,17 @@ const DOMAIN_RATE_MS = 200;
 // Many VPS providers block outbound port 25. When connections to several
 // different mail hosts all fail at the TCP level, stop trying for a while
 // instead of burning a full timeout on every address.
-const UNREACHABLE_THRESHOLD = 3;
+//
+// Individual servers failing is normal (tarpitting, delayed greetings, dead
+// hosts), so this only trips when NO mail server has answered recently: one
+// successful session proves the port is open, and a few slow small-business
+// hosts must not switch mailbox checks off for every other address.
+const UNREACHABLE_THRESHOLD = 5;
 const UNREACHABLE_COOLDOWN_MS = 10 * 60 * 1000;
+const REACHABLE_PROOF_MS = 30 * 60 * 1000;
 const unreachableHosts = new Set<string>();
 let smtpUnavailableUntil = 0;
+let lastReachableAt = 0;
 
 export function isSmtpUnavailable(): boolean {
   return Date.now() < smtpUnavailableUntil;
@@ -49,18 +56,23 @@ export function isSmtpUnavailable(): boolean {
 export function resetSmtpStateForTests(): void {
   unreachableHosts.clear();
   smtpUnavailableUntil = 0;
+  lastReachableAt = 0;
   domainLastCheck.clear();
 }
 
-function noteReachable(): void {
+/** @internal Exported for tests. */
+export function noteReachable(now: number = Date.now()): void {
   unreachableHosts.clear();
   smtpUnavailableUntil = 0;
+  lastReachableAt = now;
 }
 
-function noteUnreachable(host: string): void {
+/** @internal Exported for tests. */
+export function noteUnreachable(host: string, now: number = Date.now()): void {
+  if (now - lastReachableAt < REACHABLE_PROOF_MS) return;
   unreachableHosts.add(host);
   if (unreachableHosts.size >= UNREACHABLE_THRESHOLD) {
-    smtpUnavailableUntil = Date.now() + UNREACHABLE_COOLDOWN_MS;
+    smtpUnavailableUntil = now + UNREACHABLE_COOLDOWN_MS;
     unreachableHosts.clear();
   }
 }
