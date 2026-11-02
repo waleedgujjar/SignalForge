@@ -8,14 +8,12 @@ import { Upload, FileSpreadsheet, Loader2, X, Plus } from 'lucide-react';
 
 import {
   createLead,
-  enrollCampaignLeads,
   fetchCampaign,
   fetchLeads,
-  previewCampaignEligibility,
   removeCampaignLead,
   smartImportLeads,
-  type EligibilityReport,
 } from '@/lib/api';
+import { VerificationStatusBadge } from '@/components/verification/status-badge';
 import { WizardNavigation } from '@/components/campaigns/campaign-wizard-stepper';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -40,7 +38,8 @@ export default function CampaignLeadsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = React.useState('');
   const [selectedLeadIds, setSelectedLeadIds] = React.useState<string[]>([]);
-  const [eligibilityReport, setEligibilityReport] = React.useState<EligibilityReport | null>(null);
+  // Leads waiting in the review step (from search selection, quick add or upload).
+  const [reviewLeadIds, setReviewLeadIds] = React.useState<string[]>([]);
   const [eligibilityOpen, setEligibilityOpen] = React.useState(false);
   const [selectedLeadId, setSelectedLeadId] = React.useState<string | null>(null);
 
@@ -62,25 +61,17 @@ export default function CampaignLeadsPage() {
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['campaign', params.id] });
 
-  const previewMutation = useMutation({
-    mutationFn: () => previewCampaignEligibility(params.id, selectedLeadIds),
-    onSuccess: (report) => {
-      setEligibilityReport(report);
-      setEligibilityOpen(true);
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
+  function openReview(leadIds: string[]) {
+    setReviewLeadIds(leadIds);
+    setEligibilityOpen(true);
+  }
 
-  const enrollMutation = useMutation({
-    mutationFn: () => enrollCampaignLeads(params.id, { leadIds: selectedLeadIds }),
-    onSuccess: (result) => {
-      toast.success(`Enrolled ${result.enrolled} lead(s)`);
-      setEligibilityOpen(false);
-      setSelectedLeadIds([]);
-      invalidate();
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
+  function handleEnrolled(count: number) {
+    toast.success(`Enrolled ${count} lead${count === 1 ? '' : 's'}`);
+    setSelectedLeadIds([]);
+    invalidate();
+    queryClient.invalidateQueries({ queryKey: ['leads'] });
+  }
 
   const removeMutation = useMutation({
     mutationFn: (leadId: string) => removeCampaignLead(params.id, leadId),
@@ -92,41 +83,31 @@ export default function CampaignLeadsPage() {
   });
 
   const uploadMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const result = await smartImportLeads(file);
-      const leadIds = result.createdLeadIds ?? [];
-      if (leadIds.length > 0) {
-        await enrollCampaignLeads(params.id, { leadIds, force: true });
-      }
-      return { importResult: result, enrolledCount: leadIds.length };
-    },
-    onSuccess: ({ importResult, enrolledCount }) => {
+    mutationFn: (file: File) => smartImportLeads(file),
+    onSuccess: (importResult) => {
       const { summary } = importResult;
+      const leadIds = importResult.createdLeadIds ?? [];
+      setUploadFile(null);
+      queryClient.invalidateQueries({ queryKey: ['leads'] });
       if (summary.created === 0 && summary.updated === 0) {
         toast.warning('No leads were imported. Check that your file has valid data.');
-      } else {
-        toast.success(
-          `Imported ${summary.created} lead(s) and enrolled ${enrolledCount} into this campaign.${summary.updated > 0 ? ` ${summary.updated} existing lead(s) updated.` : ''}`,
-        );
+        return;
       }
-      setUploadFile(null);
-      invalidate();
-      queryClient.invalidateQueries({ queryKey: ['leads'] });
+      toast.success(
+        `Imported ${summary.created} lead(s).${summary.updated > 0 ? ` ${summary.updated} existing lead(s) updated.` : ''} Review them before enrolling.`,
+      );
+      // New leads go through the same verify-and-review step as selected ones.
+      if (leadIds.length > 0) openReview(leadIds);
     },
     onError: (err: Error) => toast.error(err.message),
   });
 
   const quickAddMutation = useMutation({
-    mutationFn: async (email: string) => {
-      const lead = await createLead({ email });
-      await enrollCampaignLeads(params.id, { leadIds: [lead.id], force: true });
-      return lead;
-    },
+    mutationFn: (email: string) => createLead({ email }),
     onSuccess: (lead) => {
-      toast.success(`Added ${lead.email} and enrolled in campaign`);
       setQuickEmail('');
-      invalidate();
       queryClient.invalidateQueries({ queryKey: ['leads'] });
+      openReview([lead.id]);
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -207,7 +188,7 @@ export default function CampaignLeadsPage() {
           {addMode === 'quick-add' ? (
             <>
               <p className="text-sm text-muted-foreground">
-                Type an email address to instantly create a lead and enroll it in this campaign.
+                Type an email address to create a lead, verify it and enroll it in this campaign.
               </p>
               <form
                 onSubmit={(e) => {
@@ -251,6 +232,7 @@ export default function CampaignLeadsPage() {
                       <TableHead className="w-10" />
                       <TableHead>Email</TableHead>
                       <TableHead>Company</TableHead>
+                      <TableHead>Email status</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -265,16 +247,16 @@ export default function CampaignLeadsPage() {
                         </TableCell>
                         <TableCell>{lead.email}</TableCell>
                         <TableCell>{lead.company ?? '—'}</TableCell>
+                        <TableCell>
+                          <VerificationStatusBadge status={lead.verification?.status} />
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               </div>
-              <Button
-                disabled={selectedLeadIds.length === 0 || previewMutation.isPending}
-                onClick={() => previewMutation.mutate()}
-              >
-                Preview eligibility ({selectedLeadIds.length})
+              <Button disabled={selectedLeadIds.length === 0} onClick={() => openReview(selectedLeadIds)}>
+                Review &amp; enroll ({selectedLeadIds.length})
               </Button>
             </>
           ) : (
@@ -330,7 +312,7 @@ export default function CampaignLeadsPage() {
                   </div>
 
                   <p className="text-xs text-muted-foreground">
-                    Leads will be imported and automatically enrolled in this campaign.
+                    Leads are imported, then you review their verification status before they are enrolled.
                     Columns like Email, Name, Company, Job Title, etc. are auto-detected.
                   </p>
 
@@ -342,12 +324,12 @@ export default function CampaignLeadsPage() {
                     {uploadMutation.isPending ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Importing &amp; enrolling...
+                        Importing...
                       </>
                     ) : (
                       <>
                         <Upload className="mr-2 h-4 w-4" />
-                        Import &amp; Enroll Leads
+                        Import &amp; review leads
                       </>
                     )}
                   </Button>
@@ -412,9 +394,9 @@ export default function CampaignLeadsPage() {
       <LeadEligibilityModal
         open={eligibilityOpen}
         onOpenChange={setEligibilityOpen}
-        report={eligibilityReport}
-        loading={enrollMutation.isPending}
-        onConfirm={() => enrollMutation.mutate()}
+        campaignId={params.id}
+        leadIds={reviewLeadIds}
+        onEnrolled={handleEnrolled}
       />
 
       {campaign && ['DRAFT', 'SCHEDULED'].includes(campaign.status) && (

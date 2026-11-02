@@ -83,12 +83,27 @@ export default function VerificationJobPage() {
         <PageHeader title={job.name ?? 'Verification job'} description={`${job.completed} of ${job.total} completed`} />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card className="p-4"><div className="text-sm text-muted-foreground">Valid</div><div className="text-2xl font-semibold">{job.validCount}</div></Card>
-        <Card className="p-4"><div className="text-sm text-muted-foreground">Risky</div><div className="text-2xl font-semibold">{job.riskyCount}</div></Card>
-        <Card className="p-4"><div className="text-sm text-muted-foreground">Invalid</div><div className="text-2xl font-semibold">{job.invalidCount}</div></Card>
-        <Card className="p-4"><div className="text-sm text-muted-foreground">Unknown</div><div className="text-2xl font-semibold">{job.unknownCount}</div></Card>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-7">
+        {[
+          ['Valid', job.validCount],
+          ['Catch-all', job.catchAllCount ?? 0],
+          ['Unknown', job.unknownCount],
+          ['Risky', job.riskyCount],
+          ['Role', job.roleCount],
+          ['Invalid', job.invalidCount],
+          ['Disposable', job.disposableCount],
+        ].map(([label, value]) => (
+          <Card key={label} className="p-4">
+            <div className="text-sm text-muted-foreground">{label}</div>
+            <div className="text-2xl font-semibold tabular-nums">{value}</div>
+          </Card>
+        ))}
       </div>
+      {job.cachedCount ? (
+        <p className="text-sm text-muted-foreground">
+          {job.cachedCount} address{job.cachedCount === 1 ? ' was' : 'es were'} answered from a recent verification instead of being checked again.
+        </p>
+      ) : null}
 
       <Card className="p-4 space-y-3">
         <div className="flex items-center justify-between gap-3">

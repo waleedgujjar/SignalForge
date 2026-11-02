@@ -138,6 +138,14 @@ async function startWorker(): Promise<void> {
         log('Discovery recovery error', { error: error instanceof Error ? error.message : String(error) });
       });
 
+    void resetMailboxDailyUsage()
+      .then((reset) => {
+        if (reset > 0) log('Reset daily usage for new day', { mailboxes: reset });
+      })
+      .catch((error) => {
+        log('Daily usage reset error', { error: error instanceof Error ? error.message : String(error) });
+      });
+
     void recoverStuckVerificationJobs()
       .then((recovered) => {
         if (recovered > 0) {
@@ -148,6 +156,30 @@ async function startWorker(): Promise<void> {
         log('Verification recovery error', { error: error instanceof Error ? error.message : String(error) });
       });
   }, RECOVERY_INTERVAL_MS);
+
+  /**
+   * Resets Mailbox.currentDailyUsage (the "sent today" figure shown in the UI)
+   * once a mailbox's local day has rolled over, so idle mailboxes do not keep
+   * showing yesterday's count. Sending capacity itself is enforced from
+   * MailboxDailyUsage and does not depend on this.
+   */
+  async function resetMailboxDailyUsage(): Promise<number> {
+    const mailboxes = await prisma.mailbox.findMany({
+      where: { currentDailyUsage: { gt: 0 } },
+      select: { id: true, timezone: true, usageResetAt: true, workspace: { select: { timezone: true } } },
+    });
+    const now = new Date();
+    const stale = mailboxes.filter((m) => {
+      const tz = m.timezone ?? m.workspace.timezone ?? 'UTC';
+      return localDate(m.usageResetAt, tz) !== localDate(now, tz);
+    });
+    if (stale.length === 0) return 0;
+    const result = await prisma.mailbox.updateMany({
+      where: { id: { in: stale.map((m) => m.id) } },
+      data: { currentDailyUsage: 0, usageResetAt: now },
+    });
+    return result.count;
+  }
 
   async function cleanupExpiredRecords(): Promise<void> {
     const now = new Date();
@@ -199,3 +231,14 @@ void startWorker().catch((error) => {
   console.error('Failed to start scheduler worker', error);
   process.exit(1);
 });
+
+/** Calendar date (YYYY-MM-DD) of `at` in `timeZone`, falling back to UTC. */
+function localDate(at: Date, timeZone: string): string {
+  const format = (tz: string) =>
+    new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(at);
+  try {
+    return format(timeZone);
+  } catch {
+    return format('UTC');
+  }
+}

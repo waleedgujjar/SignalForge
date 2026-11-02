@@ -110,8 +110,12 @@ export class SendingSchedulerService {
           stepId: job.sequenceStepId,
         };
 
+        // Same id for repeated dispatches of one scheduled attempt (dedup across
+        // ticks), new id once the job is rescheduled. A fixed per-job id made
+        // BullMQ silently ignore retries while the earlier attempt was still in
+        // its failed/completed set.
         const bullJob = await this.emailSendQueue.add('send', payload, {
-          jobId: `sending-job-${job.id}`,
+          jobId: `sending-job-${job.id}-${job.scheduledAt.getTime()}`,
           removeOnComplete: 500,
           removeOnFail: 1000,
         });

@@ -45,10 +45,10 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 
-const STAGING_FIELDS = ['username', 'name', 'bio', 'category', 'website', 'email', 'phone'] as const;
+const STAGING_FIELDS = ['username', 'name', 'bio', 'category', 'keywords', 'website', 'email', 'phone'] as const;
 const FIELD_LABELS: Record<string, string> = {
-  username: 'Username', name: 'Name', bio: 'Bio', category: 'Category',
-  website: 'Website', email: 'Email', phone: 'Phone Number',
+  username: 'Username', name: 'Name', bio: 'Bio / Description', category: 'Category / Industry',
+  keywords: 'Keywords / Tags', website: 'Website', email: 'Email', phone: 'Phone Number',
 };
 const ACTIVE = new Set(['SCANNING', 'PROCESSING']);
 

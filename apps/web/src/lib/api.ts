@@ -350,17 +350,41 @@ export interface CampaignValidationResult {
   warnings: string[];
 }
 
+export type VerificationTier = 'ELIGIBLE' | 'REVIEW' | 'NOT_ELIGIBLE' | 'UNVERIFIED';
+
+export interface LeadEligibility {
+  leadId: string;
+  email: string;
+  eligible: boolean;
+  reasons: string[];
+  verification?: {
+    status: string;
+    tier: VerificationTier;
+    reason: string | null;
+    verifiedAt: string | null;
+    stale: boolean;
+  } | null;
+  /** Every blocking reason is a review-tier verification result; the user may approve it. */
+  reviewable?: boolean;
+  reviewApproved?: boolean;
+}
+
 export interface EligibilityReport {
-  eligible: { leadId: string; email: string; eligible: boolean; reasons: string[] }[];
-  ineligible: { leadId: string; email: string; eligible: boolean; reasons: string[] }[];
-  suppressed: { leadId: string; email: string; eligible: boolean; reasons: string[] }[];
-  alreadyEnrolled: { leadId: string; email: string; eligible: boolean; reasons: string[] }[];
+  eligible: LeadEligibility[];
+  ineligible: LeadEligibility[];
+  suppressed: LeadEligibility[];
+  alreadyEnrolled: LeadEligibility[];
+  /** Every evaluated lead in request order (older API versions omit it). */
+  leads?: LeadEligibility[];
+  needsVerification?: string[];
   counts: {
     total: number;
     eligible: number;
     ineligible: number;
     suppressed: number;
     alreadyEnrolled: number;
+    review?: number;
+    needsVerification?: number;
   };
 }
 
@@ -425,7 +449,7 @@ export interface Lead {
   customFields: Record<string, string>;
   createdAt: string;
   updatedAt: string;
-  verification?: { status: string; score: number; reason?: string | null } | null;
+  verification?: LeadVerificationDetail | null;
   campaignLeads?: { campaign: { id: string; name: string; status: string } }[];
   tags?: { tag: Tag }[];
   listMembers?: { list: { id: string; name: string } }[];
@@ -705,7 +729,7 @@ export async function validateCampaign(id: string): Promise<CampaignValidationRe
 
 export async function enrollCampaignLeads(
   id: string,
-  data: { leadIds: string[]; force?: boolean },
+  data: { leadIds: string[]; force?: boolean; approvedLeadIds?: string[] },
 ): Promise<{ enrolled: number; skipped: number; eligibility: EligibilityReport }> {
   return apiFetch(`/campaigns/${id}/leads`, { method: 'POST', body: JSON.stringify(data) });
 }
@@ -1092,7 +1116,7 @@ export async function fetchUploadToken(): Promise<{ token: string; expiresAt: st
 async function uploadMultipart(
   path: string,
   file: File,
-  options?: { mergeStrategy?: 'skip' | 'fill_missing'; mappings?: Record<string, string> },
+  options?: Record<string, unknown>,
   timeoutMs = 600_000,
 ): Promise<Response> {
   const formData = new FormData();
@@ -1267,11 +1291,39 @@ export async function verifyEmail(email: string, options?: { leadId?: string; fo
   reasonCode?: string;
   domain?: string;
   mxStatus?: string;
+  checks?: VerificationCheck[];
+  smtpResponse?: string | null;
+  cached?: boolean;
+  verifiedAt?: string;
 }> {
   return apiFetch('/verification/check', {
     method: 'POST',
     body: JSON.stringify({ email, ...options }),
   });
+}
+
+export interface VerificationCheck {
+  check: 'syntax' | 'disposable' | 'role' | 'domain' | 'mx' | 'smtp' | 'catch_all';
+  outcome: 'pass' | 'fail' | 'warn' | 'skip';
+  detail: string;
+}
+
+export interface LeadVerificationDetail {
+  status: string;
+  score: number;
+  reason?: string | null;
+  reasonCode?: string | null;
+  riskScore?: number | null;
+  riskLevel?: string | null;
+  confidenceScore?: number | null;
+  isCatchAll?: boolean;
+  isRole?: boolean;
+  isDisposable?: boolean;
+  smtpStatus?: string | null;
+  smtpResponse?: string | null;
+  checks?: VerificationCheck[] | null;
+  verificationVersion?: string;
+  verifiedAt?: string | null;
 }
 
 export interface EmailVerificationJob {
@@ -1288,7 +1340,10 @@ export interface EmailVerificationJob {
   unknownCount: number;
   disposableCount: number;
   roleCount: number;
+  catchAllCount?: number;
+  cachedCount?: number;
   failedCount: number;
+  metadata?: { rowCount?: number; duplicateEmails?: number; rowsWithoutEmail?: number; emailColumn?: string };
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -1360,15 +1415,31 @@ export async function recheckLeadVerification(leadId: string) {
   return apiFetch(`/verification/${leadId}/recheck`, { method: 'POST' });
 }
 
-export async function uploadVerificationExcel(input: {
-  file: { data: string; mimeType: string; filename?: string };
-  emailColumn?: string;
-  name?: string;
-}): Promise<{ jobId: string; status: string; total: number; emailColumn: string }> {
-  // Parsing the file and bulk-queuing its emails runs in the request, so give
-  // this a longer ceiling than a normal read. The server still returns as soon
-  // as the job is created and queued — verification itself runs in the worker.
-  return apiFetch('/verification/excel', { method: 'POST', body: JSON.stringify(input) }, 120_000);
+export interface VerificationUploadResult {
+  jobId: string;
+  status: string;
+  total: number;
+  emailColumn: string;
+  rowCount?: number;
+  duplicateEmails?: number;
+  rowsWithoutEmail?: number;
+}
+
+/**
+ * Uploads a CSV/XLS/XLSX for bulk verification. Sent as multipart straight to
+ * the API origin (with a short-lived upload token), so large files are not
+ * subject to the web proxy's request-size limit.
+ */
+export async function uploadVerificationFile(
+  file: File,
+  options?: { emailColumn?: string; name?: string },
+): Promise<VerificationUploadResult> {
+  const response = await uploadMultipart('/verification/excel', file, options, 300_000);
+  const body = (await response.json().catch(() => ({}))) as VerificationUploadResult & { error?: string };
+  if (!response.ok) {
+    throw new Error(body.error ?? `Upload failed (${response.status})`);
+  }
+  return body;
 }
 
 export function verificationExportUrl(jobId: string): string {

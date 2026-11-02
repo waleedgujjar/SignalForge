@@ -10,7 +10,7 @@ import {
   createVerificationBulkJob,
   fetchVerificationJobs,
   fetchVerificationHistory,
-  uploadVerificationExcel,
+  uploadVerificationFile,
   verifyEmail,
 } from '@/lib/api';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -19,7 +19,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { VerificationStatusBadge } from '@/components/verification/status-badge';
+import {
+  VerificationStatusBadge,
+  VERIFICATION_FILTER_OPTIONS,
+} from '@/components/verification/status-badge';
+import { VerificationEvidence } from '@/components/verification/verification-evidence';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -27,19 +31,10 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      resolve(result.split(',')[1] ?? '');
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-const RECENT_STATUSES = ['VERIFIED', 'RISKY', 'INVALID', 'UNKNOWN', 'DISPOSABLE', 'ROLE_BASED'];
+// History rows always have a result, so the unverified/stale options do not apply.
+const RECENT_STATUSES = VERIFICATION_FILTER_OPTIONS.filter(
+  (o) => o.value !== 'UNVERIFIED' && o.value !== 'NEEDS_VERIFICATION',
+);
 
 export default function VerifyEmailsPage() {
   const router = useRouter();
@@ -101,17 +96,19 @@ export default function VerifyEmailsPage() {
   });
 
   const excelMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const data = await fileToBase64(file);
-      return uploadVerificationExcel({
-        file: { data, mimeType: file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename: file.name },
-      });
-    },
+    mutationFn: (file: File) => uploadVerificationFile(file),
     onSuccess: (result) => {
-      toast.success(`Excel job started (${result.total} emails)`);
+      const skipped = [
+        result.duplicateEmails ? `${result.duplicateEmails} duplicate` : null,
+        result.rowsWithoutEmail ? `${result.rowsWithoutEmail} without an email` : null,
+      ].filter(Boolean);
+      toast.success(
+        `Verifying ${result.total} unique emails from the "${result.emailColumn}" column` +
+          (skipped.length ? ` (skipped ${skipped.join(', ')} rows)` : ''),
+      );
       router.push(`/leads/verify/${result.jobId}`);
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toast.error(error.message, { duration: 10_000 }),
   });
 
   return (
@@ -144,14 +141,19 @@ export default function VerifyEmailsPage() {
             </Button>
             {singleResult && (
               <div className="rounded-md border p-3 text-sm space-y-2">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <VerificationStatusBadge status={singleResult.status} />
-                  <span className="text-muted-foreground">Score {singleResult.score}</span>
+                  <span className="text-muted-foreground">
+                    Confidence {singleResult.confidenceScore ?? singleResult.score} · Risk {singleResult.riskScore ?? '—'}
+                  </span>
+                  {singleResult.cached ? (
+                    <span className="text-xs text-muted-foreground">
+                      (reused result from {new Date(singleResult.verifiedAt!).toLocaleString()})
+                    </span>
+                  ) : null}
                 </div>
                 <p>{singleResult.reason}</p>
-                {singleResult.riskScore != null && (
-                  <p className="text-muted-foreground">Risk {singleResult.riskScore} · Confidence {singleResult.confidenceScore ?? '—'}</p>
-                )}
+                <VerificationEvidence checks={singleResult.checks} smtpResponse={singleResult.smtpResponse} />
               </div>
             )}
           </CardContent>
@@ -184,17 +186,23 @@ export default function VerifyEmailsPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <Input
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              disabled={excelMutation.isPending}
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) excelMutation.mutate(file);
-              }}
-            />
+            <div className="flex items-center gap-3">
+              <Input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                disabled={excelMutation.isPending}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  // Clear so choosing the same file again (after fixing it) re-triggers.
+                  event.target.value = '';
+                  if (file) excelMutation.mutate(file);
+                }}
+              />
+              {excelMutation.isPending ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : null}
+            </div>
             <p className="mt-2 text-sm text-muted-foreground">
-              We detect the email column automatically and append verification columns on export.
+              CSV, XLS or XLSX. We find the email column automatically, skip duplicates and rows without an
+              address, and append verification columns to your original file on export.
             </p>
           </CardContent>
         </Card>
@@ -214,7 +222,9 @@ export default function VerifyEmailsPage() {
                 <TableHead>Status</TableHead>
                 <TableHead>Progress</TableHead>
                 <TableHead>Valid</TableHead>
-                <TableHead>Risky</TableHead>
+                <TableHead>Catch-all</TableHead>
+                <TableHead>Unknown</TableHead>
+                <TableHead>Invalid</TableHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
@@ -225,7 +235,9 @@ export default function VerifyEmailsPage() {
                   <TableCell>{job.status}</TableCell>
                   <TableCell>{job.completed}/{job.total}</TableCell>
                   <TableCell>{job.validCount}</TableCell>
-                  <TableCell>{job.riskyCount}</TableCell>
+                  <TableCell>{job.catchAllCount ?? 0}</TableCell>
+                  <TableCell>{job.unknownCount}</TableCell>
+                  <TableCell>{job.invalidCount + job.disposableCount}</TableCell>
                   <TableCell>
                     <Button variant="ghost" size="sm" onClick={() => router.push(`/leads/verify/${job.id}`)}>
                       View
@@ -263,8 +275,8 @@ export default function VerifyEmailsPage() {
               <SelectTrigger className="w-[150px]"><SelectValue placeholder="All statuses" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="ALL">All statuses</SelectItem>
-                {RECENT_STATUSES.map((status) => (
-                  <SelectItem key={status} value={status}>{status}</SelectItem>
+                {RECENT_STATUSES.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

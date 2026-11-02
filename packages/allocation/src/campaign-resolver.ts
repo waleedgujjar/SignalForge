@@ -39,6 +39,7 @@ interface MailboxRow {
 }
 
 interface UsageRow {
+  sentCount: number;
   reservedCount: number;
   warmupSentCount: number;
   warmupReservedCount: number;
@@ -53,6 +54,7 @@ async function loadUsageCounts(
     where: { mailboxId: { in: mailboxIds }, usageDate },
     select: {
       mailboxId: true,
+      sentCount: true,
       reservedCount: true,
       warmupSentCount: true,
       warmupReservedCount: true,
@@ -62,6 +64,7 @@ async function loadUsageCounts(
     rows.map((r) => [
       r.mailboxId,
       {
+        sentCount: r.sentCount,
         reservedCount: r.reservedCount,
         warmupSentCount: r.warmupSentCount,
         warmupReservedCount: r.warmupReservedCount,
@@ -81,7 +84,10 @@ function buildCandidate(
     status: mailbox.status,
     healthStatus: mailbox.healthStatus,
     dailySendingLimit: mailbox.dailySendingLimit,
-    currentDailyUsage: mailbox.currentDailyUsage,
+    // Today's campaign sends for this usage date. Mailbox.currentDailyUsage is a
+    // lifetime counter that is never reset; reading it here locked mailboxes out
+    // permanently once their all-time sends reached the daily limit.
+    currentDailyUsage: usage?.sentCount ?? 0,
     verifiedAt: mailbox.verifiedAt,
     smtpHost: mailbox.smtpHost,
     smtpPort: mailbox.smtpPort,

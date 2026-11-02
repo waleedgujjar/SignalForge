@@ -16,6 +16,8 @@ interface Usage {
   usageDate: Date;
   sentCount: number;
   reservedCount: number;
+  warmupSentCount: number;
+  warmupReservedCount: number;
 }
 
 const reservations = new Map<string, Reservation>();
@@ -60,6 +62,16 @@ vi.mock('@signalforge/database', () => ({
 }));
 
 const txProxy = {
+  // Mirrors the atomic UPDATE in reserveCapacity:
+  // values = [mailboxId, usageDate (YYYY-MM-DD), dailyLimit].
+  $executeRaw: async (_sql: TemplateStringsArray, mailboxId: string, usageDate: string, dailyLimit: number) => {
+    const found = usages.get(usageKey(mailboxId, new Date(`${usageDate}T00:00:00.000Z`)));
+    if (!found) return 0;
+    const used = found.sentCount + found.reservedCount + found.warmupSentCount + found.warmupReservedCount;
+    if (used >= dailyLimit) return 0;
+    found.reservedCount += 1;
+    return 1;
+  },
   mailboxCapacityReservation: {
     findUnique: async ({ where }: { where: { sendingJobId?: string; id?: string } }) => {
       if (where.sendingJobId) return reservationsByJob.get(where.sendingJobId) ?? null;
@@ -133,24 +145,6 @@ const txProxy = {
       if (data.reservedCount?.increment) found.reservedCount += data.reservedCount.increment;
       if (data.reservedCount?.decrement) found.reservedCount -= data.reservedCount.decrement;
       return found;
-    },
-    updateMany: async ({
-      where,
-      data,
-    }: {
-      where: {
-        mailboxId: string;
-        usageDate: Date;
-        reservedCount: { lt: number };
-      };
-      data: { reservedCount: { increment: number } };
-    }) => {
-      const key = usageKey(where.mailboxId, where.usageDate);
-      const found = usages.get(key);
-      if (!found) return { count: 0 };
-      if (found.reservedCount >= where.reservedCount.lt) return { count: 0 };
-      found.reservedCount += data.reservedCount.increment;
-      return { count: 1 };
     },
   },
 };
@@ -285,5 +279,38 @@ describe('releaseReservation', () => {
     expect(usage?.reservedCount).toBe(0);
     expect(usage?.sentCount).toBe(0);
     expect(reservations.get(res.reservationId)?.status).toBe('RELEASED');
+  });
+});
+
+describe('reserveCapacity — shared account limit', () => {
+  const base = {
+    workspaceId: 'ws_1',
+    mailboxId: 'mb_1',
+    poolId: null,
+    usageDate: '2026-01-01',
+    dailyLimit: 3,
+    strategy: 'ROUND_ROBIN' as const,
+  };
+
+  it('counts warm-up sends toward the account daily limit', async () => {
+    const { reserveCapacity, CapacityExhaustedError } = await import('./reservation.js');
+    usages.set(usageKey('mb_1', new Date('2026-01-01T00:00:00.000Z')), {
+      mailboxId: 'mb_1',
+      usageDate: new Date('2026-01-01T00:00:00.000Z'),
+      sentCount: 1,
+      reservedCount: 0,
+      warmupSentCount: 1,
+      warmupReservedCount: 1,
+    });
+    await expect(reserveCapacity({ ...base, sendingJobId: 'job_w' })).rejects.toBeInstanceOf(CapacityExhaustedError);
+  });
+
+  it('never reserves past the limit across many jobs', async () => {
+    const { reserveCapacity } = await import('./reservation.js');
+    const results = await Promise.allSettled(
+      Array.from({ length: 6 }, (_, i) => reserveCapacity({ ...base, sendingJobId: `job_${i}` })),
+    );
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(3);
+    expect([...usages.values()][0]?.reservedCount).toBe(3);
   });
 });

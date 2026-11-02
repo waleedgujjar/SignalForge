@@ -8,6 +8,12 @@ export interface RampComputeInput {
   now: Date;
   pausedHours?: number;
   holdRamp?: boolean;
+  /**
+   * The limit actually in effect. When given, "room to grow" is judged from it
+   * rather than from the time-based target: after a hold, the target reaches
+   * the cap while the real limit is still below it, which stalled the ramp.
+   */
+  currentLimit?: number;
 }
 
 export interface RampComputeResult {
@@ -34,6 +40,7 @@ export function computeCurrentLimit(input: RampComputeInput): RampComputeResult 
     now,
     pausedHours = 0,
     holdRamp = false,
+    currentLimit,
   } = input;
 
   const cap = Math.max(startingDailyLimit, maximumDailyLimit);
@@ -51,7 +58,8 @@ export function computeCurrentLimit(input: RampComputeInput): RampComputeResult 
   const periodsCompleted = Math.floor(totalNetHours / rampIntervalHours);
   const targetLimit = Math.min(cap, startingDailyLimit + periodsCompleted * rampStep);
 
-  const shouldProgress = !holdRamp && effectiveHours >= rampIntervalHours && targetLimit < cap;
+  const belowCap = (currentLimit ?? targetLimit) < cap;
+  const shouldProgress = !holdRamp && effectiveHours >= rampIntervalHours && belowCap;
   const nextProgressionAt = new Date(anchor.getTime() + rampIntervalHours * 60 * 60_000 + pausedMs);
 
   return {

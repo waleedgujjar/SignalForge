@@ -79,21 +79,19 @@ export async function reserveWarmupCapacity(
       );
     }
 
-    const updated = await tx.mailboxDailyUsage.updateMany({
-      where: {
-        mailboxId: input.mailboxId,
-        usageDate,
-        warmupReservedCount: {
-          lt: input.warmupDailyLimit - usage.warmupSentCount,
-        },
-      },
-      data: { warmupReservedCount: { increment: 1 } },
-    });
+    // One statement checks both the warm-up limit and the shared account limit
+    // under the row lock, so concurrent campaign and warm-up workers cannot
+    // overshoot either.
+    const updated = await tx.$executeRaw`
+      UPDATE "MailboxDailyUsage"
+         SET "warmupReservedCount" = "warmupReservedCount" + 1, "updatedAt" = NOW()
+       WHERE "mailboxId" = ${input.mailboxId}
+         AND "usageDate" = ${input.usageDate}::date
+         AND "warmupSentCount" + "warmupReservedCount" < ${input.warmupDailyLimit}
+         AND "sentCount" + "reservedCount" + "warmupSentCount" + "warmupReservedCount" < ${input.accountDailyLimit}`;
 
-    if (updated.count === 0) {
-      throw new WarmupReservationConflictError(
-        'Concurrent update prevented warmup reservation',
-      );
+    if (updated === 0) {
+      throw new WarmupCapacityExhaustedError('Daily capacity was used up by a concurrent send');
     }
 
     if (existing) {

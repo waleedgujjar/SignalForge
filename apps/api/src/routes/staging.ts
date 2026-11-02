@@ -13,6 +13,7 @@ import {
   buildStagedLeadData,
   buildStagedLeadWhere,
   UNCATEGORIZED,
+  sortCategoryBuckets,
   toCsv,
   toXlsx,
   type StagingField,
@@ -320,13 +321,15 @@ export const stagingRoutes: FastifyPluginAsync = async (app) => {
       by: ['assignedCategory'],
       where: { datasetId: id },
       _count: { _all: true },
-      orderBy: { _count: { assignedCategory: 'desc' } },
     });
+    // Rows never categorized (null) and rows marked Uncategorized are one bucket.
+    const counts = new Map<string, number>();
+    for (const g of groups) {
+      const category = g.assignedCategory ?? UNCATEGORIZED;
+      counts.set(category, (counts.get(category) ?? 0) + g._count._all);
+    }
     return {
-      data: groups.map((g) => ({
-        category: g.assignedCategory ?? UNCATEGORIZED,
-        count: g._count._all,
-      })),
+      data: sortCategoryBuckets([...counts].map(([category, count]) => ({ category, count }))),
     };
   });
 
@@ -470,6 +473,7 @@ export const stagingRoutes: FastifyPluginAsync = async (app) => {
       sourceCategory: string | null;
       category: string | null;
       confidence: number | null;
+      categoryReason: string | null;
       website: string | null;
       email: string | null;
       phone: string | null;
@@ -495,6 +499,7 @@ export const stagingRoutes: FastifyPluginAsync = async (app) => {
           sourceCategory: lead.category,
           category: lead.assignedCategory,
           confidence: lead.categoryConfidence,
+          categoryReason: lead.categoryReason,
           website: lead.website,
           email: lead.email,
           phone: lead.phone,
@@ -512,6 +517,7 @@ export const stagingRoutes: FastifyPluginAsync = async (app) => {
       { header: 'Original Category', value: (r) => r.sourceCategory },
       { header: 'Category', value: (r) => r.category },
       { header: 'Category Confidence', value: (r) => r.confidence },
+      { header: 'Category Reason', value: (r) => r.categoryReason },
       { header: 'Website', value: (r) => r.website },
       { header: 'Email', value: (r) => r.email },
       { header: 'Phone', value: (r) => r.phone },

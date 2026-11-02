@@ -60,6 +60,23 @@ vi.mock('@signalforge/database', () => ({
 }));
 
 const txProxy = {
+  // Mirrors the atomic UPDATE in reserveWarmupCapacity:
+  // values = [mailboxId, usageDate (YYYY-MM-DD), warmupDailyLimit, accountDailyLimit].
+  $executeRaw: async (
+    _sql: TemplateStringsArray,
+    mailboxId: string,
+    usageDate: string,
+    warmupLimit: number,
+    accountLimit: number,
+  ) => {
+    const found = usages.get(usageKey(mailboxId, new Date(`${usageDate}T00:00:00.000Z`)));
+    if (!found) return 0;
+    const warmupUsed = found.warmupSentCount + found.warmupReservedCount;
+    const total = found.sentCount + found.reservedCount + warmupUsed;
+    if (warmupUsed >= warmupLimit || total >= accountLimit) return 0;
+    found.warmupReservedCount += 1;
+    return 1;
+  },
   warmupCapacityReservation: {
     findUnique: async ({ where }: { where: { warmupJobId?: string; id?: string } }) => {
       if (where.warmupJobId) return reservationsByJob.get(where.warmupJobId) ?? null;
@@ -133,24 +150,6 @@ const txProxy = {
       if (data.warmupReservedCount?.decrement)
         found.warmupReservedCount -= data.warmupReservedCount.decrement;
       return found;
-    },
-    updateMany: async ({
-      where,
-      data,
-    }: {
-      where: {
-        mailboxId: string;
-        usageDate: Date;
-        warmupReservedCount: { lt: number };
-      };
-      data: { warmupReservedCount: { increment: number } };
-    }) => {
-      const key = usageKey(where.mailboxId, where.usageDate);
-      const found = usages.get(key);
-      if (!found) return { count: 0 };
-      if (found.warmupReservedCount >= where.warmupReservedCount.lt) return { count: 0 };
-      found.warmupReservedCount += data.warmupReservedCount.increment;
-      return { count: 1 };
     },
   },
 };

@@ -37,6 +37,7 @@ import {
 } from '@signalforge/deliverability';
 import type { ScheduleConfig } from '@signalforge/campaigns';
 import { publishWorkflowEvent } from '@signalforge/automations';
+import { computeUsageDate } from '@signalforge/mailboxes';
 import type { EmailSendQueuePayload } from '@signalforge/queue';
 
 export type EmailSendJobData = EmailSendQueuePayload;
@@ -323,6 +324,11 @@ export async function processEmailSendJob(data: EmailSendJobData): Promise<Pipel
     fromName: mailbox.fromName,
   });
 
+  // Set once the SMTP server has accepted the message. After that point an
+  // error is a bookkeeping failure, not a send failure: retrying would email
+  // the lead a second time.
+  let delivered: { messageId: string | null } | null = null;
+
   try {
     const listUnsubscribeUrl = buildUnsubscribeUrl(env.API_URL, data.campaignId, data.leadId, env.SESSION_SECRET);
 
@@ -331,9 +337,11 @@ export async function processEmailSendJob(data: EmailSendJobData): Promise<Pipel
     // append a 1x1 pixel, so the tracker is never scanned as a template token and
     // the layout is unaffected. The plain-text part stays pixel-free.
     const trackingId = randomUUID();
-    const renderedBody = policy.renderedBody ?? bodyTemplate;
+    // A visible opt-out in the body (CAN-SPAM, and expected by mailbox
+    // providers) in addition to the List-Unsubscribe header.
+    const renderedBody = `${policy.renderedBody ?? bodyTemplate}\n\n${UNSUBSCRIBE_FOOTER_TEXT} ${listUnsubscribeUrl}`;
     const pixelUrl = buildTrackingPixelUrl(env.API_URL, trackingId, env.SESSION_SECRET);
-    const htmlBody = `${renderedBody.replace(/\n/g, '<br>')}<img src="${pixelUrl}" alt="" width="1" height="1" style="display:none;width:1px;height:1px;border:0;overflow:hidden" />`;
+    const htmlBody = `${(policy.renderedBody ?? bodyTemplate).replace(/\n/g, '<br>')}<br><br><span style="font-size:12px;color:#6b7280">${UNSUBSCRIBE_FOOTER_TEXT} <a href="${escapeHtml(listUnsubscribeUrl)}" style="color:#6b7280">unsubscribe</a></span><img src="${pixelUrl}" alt="" width="1" height="1" style="display:none;width:1px;height:1px;border:0;overflow:hidden" />`;
 
     const sendResult = await provider.send({
       to: lead.email,
@@ -342,6 +350,7 @@ export async function processEmailSendJob(data: EmailSendJobData): Promise<Pipel
       html: htmlBody,
       listUnsubscribeUrl,
     });
+    delivered = { messageId: sendResult.messageId ?? null };
 
     const internetMessageId = sendResult.internetMessageId ?? sendResult.messageId ?? null;
 
@@ -366,12 +375,23 @@ export async function processEmailSendJob(data: EmailSendJobData): Promise<Pipel
           trackingId,
         },
       });
+      // currentDailyUsage is "sent today" for display; start a new count on the
+      // first send of the mailbox's local day (the scheduler also resets idle
+      // mailboxes). Capacity enforcement uses MailboxDailyUsage, not this field.
+      const usageTz = mailbox.timezone ?? campaign.workspace.timezone ?? 'UTC';
+      const sendNow = new Date();
+      const sameUsageDay =
+        computeUsageDate(mailbox.usageResetAt, usageTz) === computeUsageDate(sendNow, usageTz);
       await tx.mailbox.update({
         where: { id: mailbox.id },
         data: {
-          currentDailyUsage: { increment: 1 },
-          lastSuccessfulSendAt: new Date(),
-          healthStatus: 'HEALTHY',
+          ...(sameUsageDay
+            ? { currentDailyUsage: { increment: 1 } }
+            : { currentDailyUsage: 1, usageResetAt: sendNow }),
+          lastSuccessfulSendAt: sendNow,
+          // Only promote a never-evaluated mailbox. Overwriting DEGRADED/UNHEALTHY
+          // here erased the protection service's health tier on every send.
+          ...(mailbox.healthStatus === 'UNKNOWN' ? { healthStatus: 'HEALTHY' as const } : {}),
         },
       });
       const existingHealth = await tx.mailboxHealth.findUnique({ where: { mailboxId: mailbox.id } });
@@ -433,6 +453,9 @@ export async function processEmailSendJob(data: EmailSendJobData): Promise<Pipel
 
     return { ok: true, providerMessageId: sendResult.messageId ?? null };
   } catch (error) {
+    if (delivered) {
+      return recordDeliveredAfterBookkeepingError(job, allocation.reservationId, delivered, error, data);
+    }
     const classified = classifySendError(error);
     const bounce = classifyBounceFromCategory(classified.category, error);
     const isHardBounce = bounce.isBounce && bounce.bounceType === 'HARD';
@@ -673,4 +696,44 @@ async function handleHardBounce(input: {
     reason: input.errorCategory,
     error: input.bounce.response,
   });
+}
+
+/**
+ * The SMTP server accepted the message but recording it failed. Mark the job
+ * SENT and consume the reservation (best effort) so it is never retried or
+ * re-sent, and log loudly for follow-up. The lead's next step is not scheduled
+ * here; that is safer than a duplicate email.
+ */
+async function recordDeliveredAfterBookkeepingError(
+  job: SendingJob,
+  reservationId: string,
+  delivered: { messageId: string | null },
+  error: unknown,
+  data: EmailSendJobData,
+): Promise<PipelineOutcome> {
+  const message = error instanceof Error ? error.message : String(error);
+  await sendingJobService
+    .markSent(job.id, { providerMessageId: delivered.messageId, emailMessageId: null })
+    .catch(() => null);
+  await consumeReservation({ reservationId }).catch(() => null);
+  logSendingEvent('Email delivered but recording failed; not retrying to avoid a duplicate send', {
+    jobId: job.id,
+    workspaceId: data.workspaceId,
+    campaignId: data.campaignId,
+    campaignLeadId: data.campaignLeadId,
+    leadId: data.leadId,
+    status: 'sent_bookkeeping_error',
+    error: message.slice(0, 500),
+  });
+  return { ok: true, providerMessageId: delivered.messageId };
+}
+
+const UNSUBSCRIBE_FOOTER_TEXT = "If you'd rather not hear from me again:";
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }

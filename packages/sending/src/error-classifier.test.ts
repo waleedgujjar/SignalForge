@@ -45,6 +45,35 @@ describe('classifySendError', () => {
   });
 });
 
+describe('classifySendError — real-world replies', () => {
+  function smtpError(code: number, response: string, transportCode = 'EENVELOPE') {
+    return Object.assign(new Error(`Can't send mail - all recipients were rejected: ${response}`), {
+      code: transportCode,
+      responseCode: code,
+      response,
+    });
+  }
+
+  it.each([
+    [smtpError(550, '550-5.1.1 The email account that you tried to reach does not exist.'), 'INVALID_ADDRESS', false],
+    [smtpError(550, '550 5.7.26 This mail is unauthenticated, which poses a security risk to the sender'), 'AUTH', false],
+    [smtpError(550, '550 5.7.1 Message rejected as spam'), 'PERMANENT', false],
+    [smtpError(552, '552 5.2.2 The email account that you tried to reach is over quota'), 'BOUNCE', true],
+    [smtpError(550, '550 5.4.5 Daily user sending quota exceeded'), 'RATE_LIMIT', true],
+    [smtpError(421, '421 4.7.0 Try again later, closing connection'), 'RATE_LIMIT', true],
+    [smtpError(450, '450 4.2.1 The user you are trying to contact is receiving mail too quickly'), 'RATE_LIMIT', true],
+    [smtpError(451, '451 4.3.0 Temporary server error'), 'TEMPORARY', true],
+    [Object.assign(new Error('Invalid login: 535-5.7.8 Username and Password not accepted'), { code: 'EAUTH', responseCode: 535 }), 'AUTH', false],
+    [Object.assign(new Error('Greeting never received'), { code: 'ETIMEDOUT' }), 'CONNECTION', true],
+  ] as const)('%#: %s', (error, category, retryable) => {
+    expect(classifySendError(error)).toMatchObject({ category, retryable });
+  });
+
+  it('does not read numbers inside ids or durations as reply codes', () => {
+    expect(classifySendError('Queued as 15302ABC after 550ms').category).toBe('UNKNOWN');
+  });
+});
+
 describe('retryBackoffMs', () => {
   it('grows with attempts', () => {
     const a1 = retryBackoffMs(1);

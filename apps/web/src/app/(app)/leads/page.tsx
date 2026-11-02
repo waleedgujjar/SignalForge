@@ -44,6 +44,10 @@ import {
 } from '@/components/ui/table';
 import { toast } from 'sonner';
 import {
+  VerificationStatusBadge,
+  VERIFICATION_FILTER_OPTIONS,
+} from '@/components/verification/status-badge';
+import {
   getLeadDisplayName,
   getLeadWebsite,
   formatWebsiteHref,
@@ -319,16 +323,14 @@ export default function LeadsPage() {
           </SelectContent>
         </Select>
         <Select value={verificationFilter || 'ALL'} onValueChange={(v) => { setVerificationFilter(v === 'ALL' ? '' : v); setPage(1); }}>
-          <SelectTrigger className="w-40">
-            <SelectValue placeholder="Verification" />
+          <SelectTrigger className="w-48">
+            <SelectValue placeholder="Email verification" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">All verification</SelectItem>
-            <SelectItem value="VERIFIED">Verified</SelectItem>
-            <SelectItem value="RISKY">Risky</SelectItem>
-            <SelectItem value="INVALID">Invalid</SelectItem>
-            <SelectItem value="DISPOSABLE">Disposable</SelectItem>
-            <SelectItem value="ROLE_BASED">Role-based</SelectItem>
+            {VERIFICATION_FILTER_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <Select value={priorityFilter || 'ALL'} onValueChange={(v) => { setPriorityFilter(v === 'ALL' ? '' : v); setPage(1); }}>
@@ -565,23 +567,24 @@ export default function LeadsPage() {
                   <TableHead className="w-10">
                     <Checkbox checked={allSelected} onCheckedChange={toggleSelectAll} aria-label="Select all" />
                   </TableHead>
-                  <TableHead className="w-[18%]">
+                  <TableHead className="w-[15%]">
                     <button className="flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort('firstName')}>
                       Name <ArrowUpDown className="h-3 w-3" />
                     </button>
                   </TableHead>
-                  <TableHead className="w-[22%]">
+                  <TableHead className="w-[20%]">
                     <button className="flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort('email')}>
                       Email <ArrowUpDown className="h-3 w-3" />
                     </button>
                   </TableHead>
-                  <TableHead className="w-[18%]">
+                  <TableHead className="w-[15%]">
                     <button className="flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort('company')}>
                       Company <ArrowUpDown className="h-3 w-3" />
                     </button>
                   </TableHead>
-                  <TableHead className="w-[12%]">Phone</TableHead>
-                  <TableHead className="w-[14%]">Website</TableHead>
+                  <TableHead className="w-[10%]">Phone</TableHead>
+                  <TableHead className="w-[12%]">Website</TableHead>
+                  <TableHead className="w-[12%]">Email status</TableHead>
                   <TableHead className="w-[8%]">
                     <button className="flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort('status')}>
                       Status <ArrowUpDown className="h-3 w-3" />
@@ -659,6 +662,19 @@ export default function LeadsPage() {
                             </a>
                           );
                         })()}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col items-start gap-0.5">
+                          <VerificationStatusBadge status={lead.verification?.status} />
+                          {lead.verification?.verifiedAt ? (
+                            <span
+                              className="text-[11px] text-muted-foreground"
+                              title={`Last verified ${new Date(lead.verification.verifiedAt).toLocaleString()}`}
+                            >
+                              {new Date(lead.verification.verifiedAt).toLocaleDateString()}
+                            </span>
+                          ) : null}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <Badge variant={STATUS_VARIANT[lead.status] ?? 'secondary'}>
