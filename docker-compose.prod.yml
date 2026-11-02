@@ -214,6 +214,11 @@ services:
     restart: unless-stopped
     command: ['node', 'workers/verification-worker/dist/index.js']
     env_file: [.env.production]
+    environment:
+      # Same as lead-discovery-worker: cap V8's heap below the container limit
+      # so it GCs instead of being OOM-killed mid-job (which stalls every
+      # in-flight verification).
+      NODE_OPTIONS: --max-old-space-size=192
     depends_on:
       postgres:
         condition: service_healthy
@@ -224,7 +229,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: 256M
 
   warmup-worker:
     profiles: [deferred]
