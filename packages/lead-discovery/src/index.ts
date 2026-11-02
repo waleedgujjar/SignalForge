@@ -145,4 +145,18 @@ export {
   type ExecuteImportOptions,
   type PersistBatchResult,
 } from './import-processor.js';
-export { CATEGORY_DISPLAY_ORDER, CATEGORY_RULES, categorizeLead, sortCategoryBuckets } from './categorizer.js';
+export {
+  CATEGORY_DISPLAY_ORDER,
+  CATEGORY_RULES,
+  LOCAL_BUSINESS_CATEGORIES,
+  OTHER,
+  categorizeLead,
+  sortCategoryBuckets,
+  type LocalBusinessCategory,
+} from './categorizer.js';
+export {
+  LOCAL_BUSINESS_LIST_NAME,
+  ensureLocalBusinessList,
+  addLeadsToList,
+  organizeAsLocalBusiness,
+} from './list-organizer.js';

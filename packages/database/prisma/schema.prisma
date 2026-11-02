@@ -403,6 +403,7 @@ model Lead {
   companyDomain String?
   jobTitle      String?
   industry      String?
+  category      String?
   phone         String?
   linkedinUrl   String?
   countryCode   String?
@@ -450,6 +451,7 @@ model Lead {
   @@index([workspaceId, createdAt])
   @@index([workspaceId, importId])
   @@index([workspaceId, industry])
+  @@index([workspaceId, category])
   @@index([workspaceId, jobTitle])
   @@index([workspaceId, status, createdAt])
 }

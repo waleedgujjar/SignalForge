@@ -9,6 +9,7 @@ import {
   bulkTagSchema,
   bulkListSchema,
   bulkStatusSchema,
+  bulkCategorySchema,
   createTagSchema,
   updateTagSchema,
   createLeadListSchema,
@@ -22,7 +23,13 @@ import { requireWorkspaceGuard, getWorkspaceId } from '../plugins/auth.js';
 import { verificationJobService } from '@signalforge/verification';
 import { VERIFICATION_VERSION, verificationCacheTtlMs } from '@signalforge/email';
 import { isLinkedInResearchEnabled, leadResearchService } from '@signalforge/lead-research';
-import { isPlaceholderEmail } from '@signalforge/lead-discovery';
+import {
+  isPlaceholderEmail,
+  categorizeLead,
+  sortCategoryBuckets,
+  LOCAL_BUSINESS_CATEGORIES,
+  OTHER,
+} from '@signalforge/lead-discovery';
 import { processImportRows, executeImportRows } from '../services/lead-import-processor.js';
 
 const LEAD_INCLUDE = {
@@ -59,6 +66,9 @@ export const leadRoutes: FastifyPluginAsync = async (app) => {
         companyDomain: body.companyDomain,
         jobTitle: body.jobTitle,
         industry: body.industry,
+        category:
+          body.category ||
+          categorizeLead({ category: body.industry, name: body.company ?? body.fullName, website: body.website }).category,
         phone: body.phone,
         linkedinUrl: body.linkedinUrl,
         countryCode: body.countryCode?.toUpperCase(),
@@ -111,6 +121,12 @@ export const leadRoutes: FastifyPluginAsync = async (app) => {
     if (query.tagId) where.tags = { some: { tagId: query.tagId } };
     if (query.listId)
       where.listMembers = { some: { listId: query.listId } };
+    if (query.category === OTHER) {
+      // "Other" also covers leads that were never categorized (null).
+      where.AND = [...(Array.isArray(where.AND) ? where.AND : []), { OR: [{ category: OTHER }, { category: null }] }];
+    } else if (query.category) {
+      where.category = query.category;
+    }
     if (query.enrichmentStatus)
       where.enrichment = { ...((where.enrichment as Record<string, unknown>) ?? {}), status: query.enrichmentStatus };
     if (query.prospectPriority)
@@ -185,6 +201,8 @@ export const leadRoutes: FastifyPluginAsync = async (app) => {
 
     const data: Record<string, unknown> = { ...body };
     if (body.countryCode) data.countryCode = body.countryCode.toUpperCase();
+    // An explicit empty category clears it rather than storing "".
+    if (body.category !== undefined) data.category = body.category || null;
     if (body.firstName !== undefined || body.lastName !== undefined) {
       const fn = body.firstName ?? existing.firstName;
       const ln = body.lastName ?? existing.lastName;
@@ -302,6 +320,42 @@ export const leadRoutes: FastifyPluginAsync = async (app) => {
     }
 
     return { updated: result.count };
+  });
+
+  app.post('/bulk/category', async (request) => {
+    const { leadIds, category } = bulkCategorySchema.parse(request.body);
+    const workspaceId = getWorkspaceId(request);
+
+    const result = await prisma.lead.updateMany({
+      where: { id: { in: leadIds }, workspaceId },
+      data: { category: category || null },
+    });
+
+    return { updated: result.count };
+  });
+
+  // Distinct lead categories in the workspace with counts, for the filter and
+  // the category picker. The fixed local-business categories always appear
+  // (count 0 if unused); any extra manual labels are listed after them.
+  app.get('/categories', async (request) => {
+    const workspaceId = getWorkspaceId(request);
+    const grouped = await prisma.lead.groupBy({
+      by: ['category'],
+      where: { workspaceId },
+      _count: { _all: true },
+    });
+
+    const counts = new Map<string, number>();
+    for (const g of grouped) {
+      // Null (never categorized) folds into "Other".
+      const label = g.category ?? OTHER;
+      counts.set(label, (counts.get(label) ?? 0) + g._count._all);
+    }
+    for (const label of LOCAL_BUSINESS_CATEGORIES) {
+      if (!counts.has(label)) counts.set(label, 0);
+    }
+
+    return { data: sortCategoryBuckets([...counts].map(([category, count]) => ({ category, count }))) };
   });
 
   // ─── CSV Import ─────────────────────────────────────────────────────────────

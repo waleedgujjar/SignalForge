@@ -318,7 +318,9 @@ export const createCampaignSchema = z.object({
   sendingMode: campaignSendingModeSchema.default('MAILBOX_LIST'),
   smtpPoolId: z.string().optional().nullable(),
   mailboxId: z.string().optional().nullable(),
-  dailySendingLimit: z.number().int().positive().optional(),
+  // Default to a conservative 50/day for new campaigns (safe local-business
+  // sending volume); adjustable per campaign up to the account's limits.
+  dailySendingLimit: z.number().int().positive().max(10000).default(50),
   duplicateEnrollmentPolicy: duplicateEnrollmentPolicySchema.default('BLOCK'),
   mailboxIds: z.array(z.string()).default([]),
   leadIds: z.array(z.string()).default([]),
@@ -472,6 +474,7 @@ export const createLeadSchema = z.object({
   companyDomain: z.string().optional(),
   jobTitle: z.string().optional(),
   industry: z.string().optional(),
+  category: z.string().trim().max(60).optional(),
   phone: z.string().optional(),
   linkedinUrl: optionalLinkedinUrlSchema,
   countryCode: z.string().length(2).optional(),
@@ -512,6 +515,7 @@ export const leadListQuerySchema = z.object({
   campaignId: z.string().optional(),
   tagId: z.string().optional(),
   listId: z.string().optional(),
+  category: z.string().trim().max(60).optional(),
   enrichmentStatus: z.enum(['NOT_ENRICHED', 'QUEUED', 'ENRICHING', 'COMPLETED', 'PARTIAL', 'FAILED']).optional(),
   prospectPriority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'VERY_HIGH']).optional(),
   minProspectScore: z.coerce.number().int().min(0).max(100).optional(),
@@ -538,6 +542,12 @@ export const bulkListSchema = z.object({
 export const bulkStatusSchema = z.object({
   leadIds: z.array(z.string()).min(1).max(500),
   status: leadStatusEnum,
+});
+
+export const bulkCategorySchema = z.object({
+  leadIds: z.array(z.string()).min(1).max(500),
+  // Empty string clears the category; otherwise a short free-text label.
+  category: z.string().trim().max(60),
 });
 
 // Tags

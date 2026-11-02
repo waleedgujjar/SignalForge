@@ -10,6 +10,7 @@ import {
   createLead,
   fetchCampaign,
   fetchLeads,
+  fetchLeadCategories,
   removeCampaignLead,
   smartImportLeads,
 } from '@/lib/api';
@@ -37,6 +38,7 @@ export default function CampaignLeadsPage() {
   const params = useParams<{ id: string }>();
   const queryClient = useQueryClient();
   const [search, setSearch] = React.useState('');
+  const [categoryFilter, setCategoryFilter] = React.useState('');
   const [selectedLeadIds, setSelectedLeadIds] = React.useState<string[]>([]);
   // Leads waiting in the review step (from search selection, quick add or upload).
   const [reviewLeadIds, setReviewLeadIds] = React.useState<string[]>([]);
@@ -55,9 +57,11 @@ export default function CampaignLeadsPage() {
   });
 
   const { data: leadsData } = useQuery({
-    queryKey: ['leads', 'campaign-picker', search],
-    queryFn: () => fetchLeads({ ...(search && { search }), limit: '50' }),
+    queryKey: ['leads', 'campaign-picker', search, categoryFilter],
+    queryFn: () =>
+      fetchLeads({ ...(search && { search }), ...(categoryFilter && { category: categoryFilter }), limit: '50' }),
   });
+  const { data: categories } = useQuery({ queryKey: ['lead-categories'], queryFn: fetchLeadCategories });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['campaign', params.id] });
 
@@ -220,11 +224,38 @@ export default function CampaignLeadsPage() {
             </>
           ) : addMode === 'search' ? (
             <>
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search leads by email or company..."
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search leads by email or company..."
+                  className="min-w-[200px] flex-1"
+                />
+                <select
+                  value={categoryFilter || 'ALL'}
+                  onChange={(e) => setCategoryFilter(e.target.value === 'ALL' ? '' : e.target.value)}
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  aria-label="Filter by category"
+                >
+                  <option value="ALL">All categories</option>
+                  {(categories?.data ?? []).map((c) => (
+                    <option key={c.category} value={c.category}>{c.category}</option>
+                  ))}
+                </select>
+                <Button
+                  variant="outline"
+                  disabled={availableLeads.length === 0}
+                  onClick={() => setSelectedLeadIds(availableLeads.map((l) => l.id))}
+                >
+                  Select all shown
+                </Button>
+              </div>
+              {categoryFilter ? (
+                <p className="text-xs text-muted-foreground">
+                  Showing leads in <span className="font-medium text-foreground">{categoryFilter}</span>. Use “Select all shown”
+                  to build a category campaign.
+                </p>
+              ) : null}
               <div className="max-h-80 overflow-y-auto rounded-md border border-border">
                 <Table>
                   <TableHeader>
@@ -232,6 +263,7 @@ export default function CampaignLeadsPage() {
                       <TableHead className="w-10" />
                       <TableHead>Email</TableHead>
                       <TableHead>Company</TableHead>
+                      <TableHead>Category</TableHead>
                       <TableHead>Email status</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -247,6 +279,7 @@ export default function CampaignLeadsPage() {
                         </TableCell>
                         <TableCell>{lead.email}</TableCell>
                         <TableCell>{lead.company ?? '—'}</TableCell>
+                        <TableCell className="text-muted-foreground">{lead.category ?? 'Other'}</TableCell>
                         <TableCell>
                           <VerificationStatusBadge status={lead.verification?.status} />
                         </TableCell>
