@@ -213,6 +213,7 @@ export const verificationRoutes: FastifyPluginAsync = async (app) => {
       headers?: string[];
       rows?: Record<string, string>[];
       emailColumn?: string;
+      fallbackColumns?: string[];
       filePath?: string;
       mimeType?: string;
       originalFilename?: string | null;
@@ -242,7 +243,12 @@ export const verificationRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const exportRows: VerificationExportRow[] = sourceRows.map((row) => {
-      const email = extractEmail(row[emailColumn]) ?? '';
+      // Same rule as the upload: the chosen column, else the first other email
+      // column with a value (only for cells that are real addresses).
+      const email =
+        extractEmail(row[emailColumn]) ??
+        (row[emailColumn]?.trim() ? null : (metadata.fallbackColumns ?? []).map((c) => extractEmail(row[c])).find(Boolean)) ??
+        '';
       const entry = email ? byEmail.get(email) : undefined;
       return {
         ...row,

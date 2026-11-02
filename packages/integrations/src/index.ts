@@ -36,3 +36,14 @@ export {
   decryptTokens,
   getValidTokens,
 } from './token-manager.js';
+export {
+  EMAIL_HEADER_PRIORITY,
+  normalizeEmailHeader,
+  parseEmailCell,
+  detectEmailColumns,
+  extractEmailsFromRows,
+  type EmailCellResult,
+  type EmailColumnCandidate,
+  type EmailColumnDetection,
+  type EmailExtraction,
+} from './email-column.js';

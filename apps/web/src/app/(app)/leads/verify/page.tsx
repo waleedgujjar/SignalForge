@@ -3,14 +3,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { ShieldCheck, Upload, ClipboardList, Loader2, History, Mail, Search } from 'lucide-react';
+import { ShieldCheck, ClipboardList, Loader2, History, Mail, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
 import {
   createVerificationBulkJob,
   fetchVerificationJobs,
   fetchVerificationHistory,
-  uploadVerificationFile,
   verifyEmail,
 } from '@/lib/api';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -24,6 +23,7 @@ import {
   VERIFICATION_FILTER_OPTIONS,
 } from '@/components/verification/status-badge';
 import { VerificationEvidence } from '@/components/verification/verification-evidence';
+import { VerificationFileUploadCard } from '@/components/verification/file-upload-card';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -95,22 +95,6 @@ export default function VerifyEmailsPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const excelMutation = useMutation({
-    mutationFn: (file: File) => uploadVerificationFile(file),
-    onSuccess: (result) => {
-      const skipped = [
-        result.duplicateEmails ? `${result.duplicateEmails} duplicate` : null,
-        result.rowsWithoutEmail ? `${result.rowsWithoutEmail} without an email` : null,
-      ].filter(Boolean);
-      toast.success(
-        `Verifying ${result.total} unique emails from the "${result.emailColumn}" column` +
-          (skipped.length ? ` (skipped ${skipped.join(', ')} rows)` : ''),
-      );
-      router.push(`/leads/verify/${result.jobId}`);
-    },
-    onError: (error: Error) => toast.error(error.message, { duration: 10_000 }),
-  });
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -179,33 +163,7 @@ export default function VerifyEmailsPage() {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Upload className="h-4 w-4" /> Upload Excel / CSV
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-3">
-              <Input
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                disabled={excelMutation.isPending}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  // Clear so choosing the same file again (after fixing it) re-triggers.
-                  event.target.value = '';
-                  if (file) excelMutation.mutate(file);
-                }}
-              />
-              {excelMutation.isPending ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : null}
-            </div>
-            <p className="mt-2 text-sm text-muted-foreground">
-              CSV, XLS or XLSX. We find the email column automatically, skip duplicates and rows without an
-              address, and append verification columns to your original file on export.
-            </p>
-          </CardContent>
-        </Card>
+        <VerificationFileUploadCard onStarted={(result) => router.push(`/leads/verify/${result.jobId}`)} />
       </div>
 
       <Card>

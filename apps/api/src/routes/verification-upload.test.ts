@@ -77,15 +77,45 @@ describe('POST /verification/excel', () => {
       'Cat,mailto:cat@acme.com',
       'Ann again,ann@acme.com',
       'No email,',
-      'Colon,"Sales: dee@acme.com"',
+      'Not an email,"Sales: dee@acme.com"',
     ].join('\n');
     const res = await upload({ name: 'leads.csv', type: 'text/csv', content: csv });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ total: 4, emailColumn: 'Contact', rowCount: 6, duplicateEmails: 1, rowsWithoutEmail: 1 });
-    expect(state.jobs[0]!.emails).toEqual(['ann@acme.com', 'bob@acme.com', 'cat@acme.com', 'dee@acme.com']);
+    expect(res.json()).toMatchObject({
+      total: 3,
+      emailColumn: 'Contact',
+      rowCount: 6,
+      duplicateEmails: 1,
+      emptyRows: 1,
+      invalidRows: 1,
+      rowsWithoutEmail: 1,
+    });
+    // Only cells that are an address count; free text containing one does not.
+    expect(state.jobs[0]!.emails).toEqual(['ann@acme.com', 'bob@acme.com', 'cat@acme.com']);
     // The file is kept on disk for the export; rows are not stuffed into the job JSON.
     expect(state.jobs[0]!.metadata).toMatchObject({ filePath: expect.any(String), originalFilename: 'leads.csv' });
     expect(state.jobs[0]!.metadata.rows).toBeUndefined();
+  });
+
+  it('verifies the Gmail column, never the Google Maps or Website URLs', async () => {
+    const maps = 'https://www.google.com/maps/place/blackbelt+company+-+hvac+services+in+san+antonio+tx/@29.66927';
+    const csv = [
+      'Company,Website,Google Maps,Gmail',
+      `Blackbelt,https://blackbelt.com,${maps},contact@blackbelt.com`,
+      `Company B,https://company-b.com,${maps}2,info@company-b.com`,
+    ].join('\n');
+    const res = await upload({ name: 'leads.csv', type: 'text/csv', content: csv });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ emailColumn: 'Gmail', ambiguous: false, uniqueEmails: 2 });
+    expect(state.jobs[0]!.emails).toEqual(['contact@blackbelt.com', 'info@company-b.com']);
+  });
+
+  it('never sends URLs even when the user picks the URL column by mistake', async () => {
+    const csv = 'Company,Google Maps,Gmail\nA,https://www.google.com/maps/place/a/@29.6,-98.4,a@x.com\n';
+    const res = await upload({ name: 'leads.csv', type: 'text/csv', content: csv }, { emailColumn: 'Google Maps' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/No valid email addresses were found in the "Google Maps" column/);
+    expect(state.jobs).toHaveLength(0);
   });
 
   it('parses a CSV that Windows labels application/vnd.ms-excel', async () => {
@@ -129,5 +159,50 @@ describe('POST /verification/excel', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(state.jobs[0]!.emails).toEqual(['z@acme.com']);
+  });
+});
+
+describe('POST /verification/excel/preview', () => {
+  async function preview(file: { name: string; type: string; content: string }, options?: unknown) {
+    const { payload, headers } = multipartBody(file, options);
+    return app.inject({ method: 'POST', url: '/verification/excel/preview', payload, headers });
+  }
+
+  it('shows the detected column, counts and a preview without queuing anything', async () => {
+    const csv = [
+      'Company,Google Maps,Gmail,Business Email',
+      'A,"https://google.com/maps/place/a/@1,2",a@gmail.com,ceo@a.com',
+      'B,"https://google.com/maps/place/b/@3,4",b@gmail.com,',
+      'C,"https://google.com/maps/place/c/@5,6",not-an-email,',
+      'D,"https://google.com/maps/place/d/@7,8",,',
+    ].join('\n');
+    const res = await preview({ name: 'leads.csv', type: 'text/csv', content: csv });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    // Business Email ranks above Gmail; its empty cells fall back to Gmail.
+    expect(body).toMatchObject({
+      emailColumn: 'Business Email',
+      rowCount: 4,
+      validRows: 2,
+      uniqueEmails: 2,
+      fallbackRows: 1,
+      // Row C: Business Email empty and the Gmail fallback is not an address.
+      emptyRows: 2,
+      preview: ['ceo@a.com', 'b@gmail.com'],
+    });
+    expect(body.candidates.map((c: { header: string }) => c.header)).toEqual(['Business Email', 'Gmail']);
+    expect(state.jobs).toHaveLength(0);
+  });
+
+  it('re-previews with the column the user chose', async () => {
+    const csv = 'Gmail,Business Email\npersonal@gmail.com,work@acme.com\n';
+    const res = await preview({ name: 'x.csv', type: 'text/csv', content: csv }, { emailColumn: 'Gmail' });
+    expect(res.json()).toMatchObject({ emailColumn: 'Gmail', preview: ['personal@gmail.com'], ambiguous: false });
+  });
+
+  it('reports a file with no email column', async () => {
+    const res = await preview({ name: 'x.csv', type: 'text/csv', content: 'Company,Website\nA,https://a.com\n' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ headers: ['Company', 'Website'] });
   });
 });
