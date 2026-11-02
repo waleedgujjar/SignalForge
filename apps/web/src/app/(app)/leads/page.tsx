@@ -12,8 +12,7 @@ import {
 import {
   fetchLeads, createLead, bulkDeleteLeads,
   fetchTags, fetchLists, batchEnrichLeads, createVerificationBulkJob,
-  batchAnalyzeWebsites, fetchLeadCategories, bulkSetCategory, updateLead,
-  type Lead,
+  batchAnalyzeWebsites, fetchLeadCategories, bulkSetCategory,
 } from '@/lib/api';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { EmptyState } from '@/components/dashboard/empty-state';
@@ -68,36 +67,6 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'outline' | 'dest
   UNSUBSCRIBED: 'destructive', BOUNCED: 'destructive', ARCHIVED: 'secondary',
 };
 
-
-/**
- * Inline category picker for a lead row. Shows the current category (or "Other"
- * when unset) and lets the user change it in place. Any custom value already on
- * the lead is kept selectable even if it is not one of the known categories.
- */
-function CategoryCell({
-  lead,
-  options,
-  onChange,
-}: {
-  lead: Lead;
-  options: string[];
-  onChange: (category: string) => void;
-}) {
-  const current = lead.category ?? '';
-  const choices = current && !options.includes(current) ? [current, ...options] : options;
-  return (
-    <select
-      value={current || 'Other'}
-      onChange={(e) => onChange(e.target.value)}
-      className="h-7 w-full max-w-[150px] rounded-md border border-input bg-background px-2 text-xs text-foreground"
-      aria-label={`Category for ${lead.email}`}
-    >
-      {choices.map((c) => (
-        <option key={c} value={c}>{c}</option>
-      ))}
-    </select>
-  );
-}
 
 function TableSkeleton() {
   return (
@@ -188,16 +157,6 @@ export default function LeadsPage() {
       toast.success('Lead created');
     },
     onError: (err: Error) => toast.error(err.message),
-  });
-
-  const setCategoryMutation = useMutation({
-    mutationFn: ({ id, category }: { id: string; category: string }) =>
-      updateLead(id, { category }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['leads'] });
-      queryClient.invalidateQueries({ queryKey: ['lead-categories'] });
-    },
-    onError: (e: Error) => toast.error(e.message),
   });
 
   const bulkCategoryMutation = useMutation({
@@ -681,7 +640,11 @@ export default function LeadsPage() {
                       Company <ArrowUpDown className="h-3 w-3" />
                     </button>
                   </TableHead>
-                  <TableHead className="w-[13%]">Category</TableHead>
+                  <TableHead className="w-[13%]">
+                    <button className="flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort('category')}>
+                      Category <ArrowUpDown className="h-3 w-3" />
+                    </button>
+                  </TableHead>
                   <TableHead className="w-[9%]">Phone</TableHead>
                   <TableHead className="w-[11%]">Website</TableHead>
                   <TableHead className="w-[11%]">Email status</TableHead>
@@ -732,12 +695,10 @@ export default function LeadsPage() {
                         })()}
                       </TableCell>
                       <TableCell className="truncate">{lead.company ?? '—'}</TableCell>
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <CategoryCell
-                          lead={lead}
-                          options={categoryOptions}
-                          onChange={(category) => setCategoryMutation.mutate({ id: lead.id, category })}
-                        />
+                      <TableCell>
+                        <Badge variant="secondary" className="font-normal">
+                          {lead.category ?? 'Other'}
+                        </Badge>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {lead.phone ? (() => {
