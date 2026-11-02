@@ -116,6 +116,12 @@ services:
     restart: unless-stopped
     command: ['node', 'workers/email-worker/dist/index.js']
     env_file: [.env.production]
+    environment:
+      # Sending (nodemailer + template rendering + Prisma) pushes RSS past the
+      # old 128M cap and the cgroup OOM-killed the worker mid-send, so no email
+      # ever completed. Same fix as lead-discovery/verification workers: 256M
+      # limit with V8's heap capped below it so it GCs instead of being killed.
+      NODE_OPTIONS: --max-old-space-size=192
     depends_on:
       postgres:
         condition: service_healthy
@@ -126,7 +132,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: 256M
 
   import-worker:
     image: signalforge-workers:latest
