@@ -15,6 +15,12 @@ const ALIAS_MAP: Record<string, string> = {
   'e-mail address': 'email',
   'e mail address': 'email',
   'mail': 'email',
+  gmail: 'email',
+  'google mail': 'email',
+  'personal email': 'email',
+  'email id': 'email',
+  'emailid': 'email',
+  emails: 'email',
 
   'first name': 'firstName',
   'first_name': 'firstName',
@@ -244,13 +250,22 @@ export function normalizeHeader(raw: string): string {
   );
 }
 
+// Alias keys are written for readability ("e-mail", "email_address"); headers
+// are normalized before lookup, so normalize the keys the same way. Without
+// this, keys containing "-" or "_" could never match.
+const NORMALIZED_ALIAS_MAP = new Map<string, string>();
+for (const [alias, field] of Object.entries(ALIAS_MAP)) {
+  const key = normalizeHeader(alias);
+  if (!NORMALIZED_ALIAS_MAP.has(key)) NORMALIZED_ALIAS_MAP.set(key, field);
+}
+
 export function detectColumnMappings(headers: string[]): ColumnMapping[] {
   const usedFields = new Set<string>();
   const mappings: ColumnMapping[] = [];
 
   for (const header of headers) {
     const normalized = normalizeHeader(header);
-    const field = ALIAS_MAP[normalized];
+    const field = NORMALIZED_ALIAS_MAP.get(normalized);
 
     if (field && !usedFields.has(field)) {
       usedFields.add(field);

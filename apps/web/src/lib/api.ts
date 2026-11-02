@@ -1415,31 +1415,59 @@ export async function recheckLeadVerification(leadId: string) {
   return apiFetch(`/verification/${leadId}/recheck`, { method: 'POST' });
 }
 
-export interface VerificationUploadResult {
+export interface VerificationFilePreview {
+  filename: string | null;
+  /** Column the emails are read from. */
+  emailColumn: string;
+  /** Another column is as strong a match; the user should confirm the choice. */
+  ambiguous: boolean;
+  candidates: { header: string; reason: 'header' | 'header-generic' | 'content'; valid: number; invalid: number; empty: number }[];
+  headers: string[];
+  rowCount: number;
+  validRows: number;
+  uniqueEmails: number;
+  duplicateEmails: number;
+  invalidRows: number;
+  emptyRows: number;
+  fallbackRows: number;
+  preview: string[];
+  invalidSamples: string[];
+}
+
+export interface VerificationUploadResult extends VerificationFilePreview {
   jobId: string;
   status: string;
   total: number;
-  emailColumn: string;
-  rowCount?: number;
-  duplicateEmails?: number;
-  rowsWithoutEmail?: number;
 }
 
-/**
- * Uploads a CSV/XLS/XLSX for bulk verification. Sent as multipart straight to
- * the API origin (with a short-lived upload token), so large files are not
- * subject to the web proxy's request-size limit.
- */
-export async function uploadVerificationFile(
-  file: File,
-  options?: { emailColumn?: string; name?: string },
-): Promise<VerificationUploadResult> {
-  const response = await uploadMultipart('/verification/excel', file, options, 300_000);
-  const body = (await response.json().catch(() => ({}))) as VerificationUploadResult & { error?: string };
+async function postVerificationFile<T>(path: string, file: File, options?: { emailColumn?: string; name?: string }): Promise<T> {
+  const response = await uploadMultipart(path, file, options, 300_000);
+  const body = (await response.json().catch(() => ({}))) as T & { error?: string };
   if (!response.ok) {
     throw new Error(body.error ?? `Upload failed (${response.status})`);
   }
   return body;
+}
+
+/**
+ * Reads a CSV/XLS/XLSX and reports which column the emails come from, how
+ * many are valid, and a sample. Queues nothing. Sent as multipart straight to
+ * the API origin (with a short-lived upload token), so large files are not
+ * subject to the web proxy's request-size limit.
+ */
+export async function previewVerificationFile(
+  file: File,
+  options?: { emailColumn?: string },
+): Promise<VerificationFilePreview> {
+  return postVerificationFile('/verification/excel/preview', file, options);
+}
+
+/** Starts bulk verification of the file's emails, read from `emailColumn` (or the detected column). */
+export async function uploadVerificationFile(
+  file: File,
+  options?: { emailColumn?: string; name?: string },
+): Promise<VerificationUploadResult> {
+  return postVerificationFile('/verification/excel', file, options);
 }
 
 export function verificationExportUrl(jobId: string): string {
