@@ -23,7 +23,7 @@ export function DashboardAnalyticsSummary() {
 
   const tiles = [
     { label: 'Emails sent', value: overview ? overview.counters.sent.toLocaleString() : '—' },
-    { label: 'Delivery rate', value: overview ? `${overview.rates.deliveryRate}%` : '—' },
+    { label: 'Accept rate (SMTP)', value: overview ? `${overview.rates.deliveryRate}%` : '—' },
     { label: 'Replies', value: overview ? overview.counters.replies.toLocaleString() : '—' },
     {
       label: 'Positive replies',

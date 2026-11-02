@@ -176,7 +176,10 @@ export class WarmupSchedulerService {
     let completed = 0;
 
     for (const config of configs) {
-      const holdRamp = config.mailbox.healthStatus === 'DEGRADED';
+      // Hold the ramp whenever the mailbox is anything but healthy — a DEGRADED
+      // or UNHEALTHY mailbox must not keep increasing its daily volume.
+      const holdRamp =
+        config.mailbox.healthStatus === 'DEGRADED' || config.mailbox.healthStatus === 'UNHEALTHY';
       const result = computeCurrentLimit({
         startingDailyLimit: config.startingDailyLimit,
         maximumDailyLimit: config.maximumDailyLimit,

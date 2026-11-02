@@ -23,6 +23,7 @@ import { buildFunnel, funnelService } from './funnel-service.js';
 import { buildInsights } from './insights-service.js';
 import {
   OPEN_TRACKING_NOTE,
+  DELIVERY_CONFIRMATION_NOTE,
   type AnalyticsFilters,
   type AnalyticsOverview,
   type AnalyticsRange,
@@ -53,6 +54,7 @@ const MAX_ATTRIBUTED_REPLIES = 5_000;
 /// Limitations surfaced in the UI so a missing metric is never read as a zero.
 export const ANALYTICS_LIMITATIONS = [
   OPEN_TRACKING_NOTE,
+  DELIVERY_CONFIRMATION_NOTE,
   'Meetings are counted from manually or API-recorded outcomes; there is no calendar integration yet.',
   'Revenue and ROI are not tracked, so no monetary figures are shown.',
   'CSV uploads are processed inline and do not appear in import history.',
@@ -131,7 +133,10 @@ export class AnalyticsStatsService {
         previousActivity.leadsQualified,
       ),
       kpi('sent', 'Emails sent', counters.sent, previousCounters.sent),
-      kpi('delivered', 'Emails delivered', counters.delivered, previousCounters.delivered),
+      {
+        ...kpi('delivered', 'Accepted (SMTP)', counters.delivered, previousCounters.delivered),
+        note: DELIVERY_CONFIRMATION_NOTE,
+      },
       kpi('replies', 'Replies', counters.replies, previousCounters.replies),
       kpi('positiveReplies', 'Positive replies', replies.positive, 0),
       {

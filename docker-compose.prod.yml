@@ -238,12 +238,15 @@ services:
           memory: 256M
 
   warmup-worker:
-    profiles: [deferred]
     image: signalforge-workers:latest
     container_name: signalforge-warmup-worker
     restart: unless-stopped
     command: ['node', 'workers/warmup-worker/dist/index.js']
     env_file: [.env.production]
+    environment:
+      # Sends the ramp-scheduled warmup emails. Runs by default (no longer
+      # deferred); 256M + capped heap (nodemailer send path, same as email-worker).
+      NODE_OPTIONS: --max-old-space-size=192
     depends_on:
       postgres:
         condition: service_healthy
@@ -254,7 +257,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: 256M
 
   inbound-worker:
     image: signalforge-workers:latest
@@ -294,12 +297,16 @@ services:
           memory: 128M
 
   deliverability-worker:
-    profiles: [deferred]
     image: signalforge-workers:latest
     container_name: signalforge-deliverability-worker
     restart: unless-stopped
     command: ['node', 'workers/deliverability-worker/dist/index.js']
     env_file: [.env.production]
+    environment:
+      # Processes mailbox-health aggregation, auto-pause protection and domain
+      # re-checks. Runs by default (no longer deferred); 256M + capped heap to
+      # avoid the cgroup OOM that silently killed the other 128M workers.
+      NODE_OPTIONS: --max-old-space-size=192
     depends_on:
       postgres:
         condition: service_healthy
@@ -310,7 +317,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: 256M
 
   analytics-worker:
     profiles: [deferred]

@@ -232,6 +232,67 @@ export class CampaignValidationService {
           : `${templateInvalidCount} lead/step combination(s) have unresolved variables.`,
     });
 
+    // ── Deliverability quality report (warnings only; never blocks launch) ─────
+    // Sending-domain authentication: surface SPF/DKIM/DMARC so a campaign is not
+    // launched from a domain that will land in spam. Reads the cached
+    // DomainHealthCheck (the scheduler auto-checks sending domains).
+    const mailboxIds = new Set<string>();
+    for (const cm of campaign.mailboxes) mailboxIds.add(cm.mailboxId);
+    for (const member of campaign.smtpPool?.members ?? []) mailboxIds.add(member.mailboxId);
+    if (campaign.mailboxId) mailboxIds.add(campaign.mailboxId);
+    const domains = new Set<string>();
+    if (campaign.singleMailbox?.emailAddress) {
+      const d = domainOf(campaign.singleMailbox.emailAddress);
+      if (d) domains.add(d);
+    }
+    if (mailboxIds.size > 0) {
+      const boxes = await prisma.mailbox.findMany({
+        where: { id: { in: [...mailboxIds] } },
+        select: { emailAddress: true },
+      });
+      for (const box of boxes) {
+        const d = domainOf(box.emailAddress);
+        if (d) domains.add(d);
+      }
+    }
+    if (domains.size > 0) {
+      const rows = await prisma.domainHealthCheck.findMany({
+        where: { workspaceId, domain: { in: [...domains] } },
+      });
+      const byDomain = new Map(rows.map((r) => [r.domain, r]));
+      for (const domain of domains) {
+        const row = byDomain.get(domain);
+        for (const kind of ['SPF', 'DKIM', 'DMARC'] as const) {
+          const status =
+            kind === 'SPF' ? row?.spfStatus : kind === 'DKIM' ? row?.dkimStatus : row?.dmarcStatus;
+          const passed = status === 'PASS';
+          checks.push({
+            id: `auth_${kind.toLowerCase()}_${domain}`,
+            label: `${kind} — ${domain}`,
+            passed,
+            severity: 'warning',
+            message: passed
+              ? undefined
+              : !row
+                ? `${kind} not checked yet for ${domain}. Open Domain Auth to verify DNS.`
+                : `${kind} is ${status ?? 'UNKNOWN'} for ${domain}. Fix DNS (enable DKIM, set DMARC) to improve inbox placement.`,
+          });
+        }
+      }
+    }
+
+    // Content quality: suspicious links and spammy subjects.
+    pushContentQualityChecks(checks, enabledSteps);
+
+    // Unsubscribe is injected automatically at send time (header + footer).
+    checks.push({
+      id: 'unsubscribe',
+      label: 'Unsubscribe mechanism',
+      passed: true,
+      severity: 'warning',
+      message: 'A one-click List-Unsubscribe header and a footer link are added to every email automatically.',
+    });
+
     const errors = checks.filter((c) => !c.passed && c.severity === 'error').map((c) => c.message ?? c.label);
     const warnings = checks.filter((c) => !c.passed && c.severity === 'warning').map((c) => c.message ?? c.label);
 
@@ -248,3 +309,85 @@ export class CampaignValidationService {
 }
 
 export const campaignValidationService = new CampaignValidationService();
+
+function domainOf(email: string | null | undefined): string | null {
+  const at = (email ?? '').lastIndexOf('@');
+  if (at === -1) return null;
+  return email!.slice(at + 1).trim().toLowerCase() || null;
+}
+
+const URL_PATTERN = /\bhttps?:\/\/[^\s<>()"']+/gi;
+const URL_SHORTENERS = /(?:^|\.)(?:bit\.ly|tinyurl\.com|goo\.gl|t\.co|is\.gd|ow\.ly|buff\.ly|rebrand\.ly|cutt\.ly)$/i;
+const SPAM_WORD_PATTERNS = [
+  /\bfree\b/i,
+  /\bguarantee/i,
+  /\bact now\b/i,
+  /\blimited time\b/i,
+  /\bclick here\b/i,
+  /\b100%\b/,
+  /\bwinner\b/i,
+  /\brisk[- ]?free\b/i,
+  /\bcash\b/i,
+  /\$\$\$/,
+];
+
+/// Non-TLS, raw-IP, unparseable, or shortener links are the ones spam filters
+/// weigh against a message.
+function isSuspiciousUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return true;
+  }
+  if (url.protocol !== 'https:') return true;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(url.hostname)) return true;
+  if (URL_SHORTENERS.test(url.hostname)) return true;
+  return false;
+}
+
+function looksSpammy(subject: string): boolean {
+  if (!subject) return false;
+  const letters = subject.replace(/[^A-Za-z]/g, '');
+  const caps = subject.replace(/[^A-Z]/g, '');
+  const shouting = letters.length >= 6 && caps.length / letters.length > 0.7;
+  const punctSpam = /[!?]{2,}|\${2,}/.test(subject);
+  const triggerHits = SPAM_WORD_PATTERNS.filter((re) => re.test(subject)).length;
+  return shouting || punctSpam || triggerHits >= 2;
+}
+
+/// Content warnings surfaced in the pre-send quality report. Warnings only — they
+/// never block a launch.
+function pushContentQualityChecks(
+  checks: ValidationCheck[],
+  steps: Array<{ subjectTemplate: string; bodyTemplate: string }>,
+): void {
+  const suspicious = new Set<string>();
+  const spammySubjects: string[] = [];
+  for (const step of steps) {
+    for (const url of step.bodyTemplate.match(URL_PATTERN) ?? []) {
+      if (isSuspiciousUrl(url)) suspicious.add(url.slice(0, 80));
+    }
+    if (looksSpammy(step.subjectTemplate)) spammySubjects.push(step.subjectTemplate.slice(0, 60));
+  }
+  checks.push({
+    id: 'links',
+    label: 'Link quality',
+    passed: suspicious.size === 0,
+    severity: 'warning',
+    message:
+      suspicious.size === 0
+        ? undefined
+        : `${suspicious.size} suspicious link(s): ${[...suspicious].slice(0, 3).join(', ')}. Use plain https links on a domain that matches your sender.`,
+  });
+  checks.push({
+    id: 'subject_quality',
+    label: 'Subject quality',
+    passed: spammySubjects.length === 0,
+    severity: 'warning',
+    message:
+      spammySubjects.length === 0
+        ? undefined
+        : `Subject may look spammy: "${spammySubjects[0]}". Avoid ALL CAPS, excessive punctuation and spam trigger words.`,
+  });
+}

@@ -11,6 +11,37 @@ import type { DnsCheckStatus, DomainAuthResult } from './types.js';
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
+/**
+ * Selectors probed when the caller supplies none, so a domain's DKIM can be
+ * detected without the operator knowing the exact selector. Covers Hostinger
+ * (`hostingermail1/2/3`, published as CNAMEs that resolveTxt follows) plus the
+ * common defaults used by Google Workspace and other providers. A selector that
+ * resolves to no record counts toward a real FAIL; a lookup that times out stays
+ * UNKNOWN (see the probe logic below).
+ */
+export const DEFAULT_DKIM_SELECTORS = [
+  'hostingermail1',
+  'hostingermail2',
+  'hostingermail3',
+  'default',
+  'google',
+  'selector1',
+  'selector2',
+  's1',
+  's2',
+  'k1',
+  'dkim',
+];
+
+/// True when a DNS error means "this name has no such record" (NXDOMAIN /
+/// ENODATA) rather than an inconclusive failure (timeout, SERVFAIL). Only the
+/// former lets us conclude a selector is absent.
+function isNoRecordError(error: unknown): boolean {
+  const code = (error as { code?: string } | null)?.code ?? '';
+  const message = error instanceof Error ? error.message : String(error);
+  return /ENOTFOUND|ENODATA|NXDOMAIN/i.test(code) || /ENOTFOUND|ENODATA|NXDOMAIN/i.test(message);
+}
+
 export interface DnsLookupOptions {
   timeoutMs?: number;
   /// DKIM selectors to probe. DKIM stays UNKNOWN when none are supplied,
@@ -156,17 +187,24 @@ export async function checkDomainAuth(
     result.mxStatus = mx;
   }
 
-  for (const selector of selectors) {
-    const host = `${selector}._domainkey.${normalized}`;
-    try {
-      const records = await withTimeout(resolver.resolveTxt(host), timeoutMs);
-      const evaluated = evaluateDkimRecord(flattenTxt(records));
-      result.dkimSelectors.push({ selector, status: evaluated.status, record: evaluated.record });
-    } catch (error) {
-      errors.push(`DKIM(${selector}): ${errorMessage(error)}`);
-      result.dkimSelectors.push({ selector, status: 'UNKNOWN', record: null });
-    }
-  }
+  // Probe selectors in parallel — most resolve or NXDOMAIN quickly, so a long
+  // default list does not serialize into a long wall-clock time.
+  result.dkimSelectors = await Promise.all(
+    selectors.map(async (selector) => {
+      const host = `${selector}._domainkey.${normalized}`;
+      try {
+        const records = await withTimeout(resolver.resolveTxt(host), timeoutMs);
+        const evaluated = evaluateDkimRecord(flattenTxt(records));
+        return { selector, status: evaluated.status, record: evaluated.record };
+      } catch (error) {
+        const absent = isNoRecordError(error);
+        // A definitively absent selector is a real FAIL signal; only truly
+        // inconclusive errors (timeout/SERVFAIL) are reported and kept UNKNOWN.
+        if (!absent) errors.push(`DKIM(${selector}): ${errorMessage(error)}`);
+        return { selector, status: absent ? ('FAIL' as const) : ('UNKNOWN' as const), record: null };
+      }
+    }),
+  );
 
   // Without a selector we cannot query DKIM at all, so it stays UNKNOWN.
   if (result.dkimSelectors.length > 0) {

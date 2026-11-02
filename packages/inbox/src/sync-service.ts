@@ -2,10 +2,13 @@ import type { AIProvider } from '@signalforge/ai';
 import { prisma, Prisma } from '@signalforge/database';
 import { decryptSecret } from '@signalforge/email';
 import { createImapInboundProvider, type InboundMessage, type SyncCursor } from '@signalforge/inbound';
+import { buildIdempotencyKey, deliveryEventService, recipientBounceService } from '@signalforge/deliverability';
+import { sendingJobService } from '@signalforge/sending';
 import { matchCampaignContext } from './campaign-matcher.js';
 import { checkMessageDuplicate } from './deduplication.js';
 import { matchLeadByEmail } from './lead-matcher.js';
 import { applyReplyActions } from './reply-actions.js';
+import { isDeliveryStatusNotification, parseDsn } from './dsn-detector.js';
 import { ReplyClassifier } from './reply-classifier.js';
 import { resolveConversationThread } from './thread-resolver.js';
 import { conversationService } from './conversation-service.js';
@@ -20,11 +23,87 @@ export class InboxSyncService {
     this.classifier = new ReplyClassifier(aiProvider);
   }
 
+  /// Turns a parsed DSN into real bounce signals: a BOUNCED delivery event,
+  /// recipient bounce-state tracking, and — for hard bounces — suppression plus
+  /// stopping the matching lead's sequences. Mirrors the synchronous hard-bounce
+  /// path in the email worker so async and sync bounces behave identically.
+  private async handleDeliveryStatusNotification(workspaceId: string, message: InboundMessage): Promise<void> {
+    const recipients = parseDsn(message);
+    for (const recipient of recipients) {
+      const email = recipient.email;
+      const lead = await prisma.lead.findFirst({
+        where: { workspaceId, email: { equals: email, mode: 'insensitive' } },
+        select: { id: true },
+      });
+
+      await deliveryEventService.recordEvent({
+        workspaceId,
+        eventType: 'BOUNCED',
+        bounceType: recipient.bounceType,
+        smtpStatusCode: recipient.smtpCode,
+        enhancedStatusCode: recipient.statusCode,
+        providerResponse: recipient.diagnostic,
+        leadId: lead?.id ?? null,
+        source: 'INBOX',
+        idempotencyKey: buildIdempotencyKey(['dsn', message.providerMessageId, email]),
+      });
+
+      await recipientBounceService.recordBounce({
+        workspaceId,
+        email,
+        bounceType: recipient.bounceType,
+        smtpStatusCode: recipient.smtpCode,
+        response: recipient.diagnostic,
+      });
+
+      if (recipient.bounceType === 'HARD') {
+        await prisma.suppression.upsert({
+          where: { workspaceId_type_value: { workspaceId, type: 'EMAIL', value: email } },
+          create: { workspaceId, type: 'EMAIL', value: email, reason: 'BOUNCED', source: 'INBOX' },
+          update: { reason: 'BOUNCED' },
+        });
+        if (lead) {
+          await prisma.lead.update({ where: { id: lead.id }, data: { status: 'BOUNCED' } });
+          const enrollments = await prisma.campaignLead.findMany({
+            where: {
+              leadId: lead.id,
+              campaign: { workspaceId },
+              status: { notIn: ['UNSUBSCRIBED', 'BOUNCED', 'COMPLETED'] },
+            },
+            select: { id: true },
+          });
+          for (const enrollment of enrollments) {
+            await sendingJobService.stopCampaignLeadSequence({
+              campaignLeadId: enrollment.id,
+              workspaceId,
+              stopReason: 'HARD_BOUNCED',
+              campaignLeadStatus: 'BOUNCED',
+            });
+          }
+        }
+      }
+
+      logInboxEvent('Async bounce ingested from DSN', {
+        workspaceId,
+        status: 'bounce_ingested',
+        classification: recipient.bounceType,
+      });
+    }
+  }
+
   async processInboundMessage(
     workspaceId: string,
     mailboxId: string,
     message: InboundMessage,
   ): Promise<ProcessInboundMessageResult> {
+    // A bounce-back (DSN) is not a reply: record it as a bounce and stop, rather
+    // than opening a conversation. Idempotency on the delivery event makes a
+    // re-synced DSN a no-op.
+    if (isDeliveryStatusNotification(message)) {
+      await this.handleDeliveryStatusNotification(workspaceId, message);
+      return { conversationId: '', messageId: '', duplicate: false, classification: null, matchStatus: 'UNMATCHED' };
+    }
+
     const dedupe = await checkMessageDuplicate({
       workspaceId,
       providerMessageId: message.providerMessageId,

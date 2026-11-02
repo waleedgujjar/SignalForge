@@ -123,7 +123,7 @@ export default function AnalyticsSequencesPage() {
                   <TableHead>Step</TableHead>
                   <TableHead>Subject</TableHead>
                   <TableHead>Sent</TableHead>
-                  <TableHead>Delivered</TableHead>
+                  <TableHead>Accepted (SMTP)</TableHead>
                   <TableHead>Bounce</TableHead>
                   <TableHead>Replies</TableHead>
                   <TableHead>Reply rate</TableHead>

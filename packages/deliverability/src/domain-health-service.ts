@@ -1,5 +1,10 @@
 import { prisma } from '@signalforge/database';
-import { checkDomainAuth, normalizeDomain, type DnsLookupOptions } from './dns-checker.js';
+import {
+  checkDomainAuth,
+  normalizeDomain,
+  DEFAULT_DKIM_SELECTORS,
+  type DnsLookupOptions,
+} from './dns-checker.js';
 import { deliverabilityPolicyService } from './policy-service.js';
 
 export class DomainHealthCheckRateLimitError extends Error {
@@ -69,7 +74,11 @@ export class DomainHealthService {
       }
     }
 
-    const selectors = options.lookupOptions?.dkimSelectors ?? extractSelectors(existing?.dkimSelectors);
+    // Always probe the common selectors (so a never-configured domain surfaces
+    // DKIM as FAIL rather than UNKNOWN), plus any the caller or a prior check
+    // supplied. resolveTxt follows the CNAME a provider publishes per selector.
+    const supplied = options.lookupOptions?.dkimSelectors ?? extractSelectors(existing?.dkimSelectors);
+    const selectors = [...new Set([...supplied, ...DEFAULT_DKIM_SELECTORS])];
     const result = await checkDomainAuth(normalized, {
       ...options.lookupOptions,
       dkimSelectors: selectors,
