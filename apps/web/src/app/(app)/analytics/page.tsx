@@ -83,7 +83,7 @@ export default function AnalyticsPage() {
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <AnalyticsMetricCard
-              label="Delivery rate"
+              label="Accept rate (SMTP)"
               value={`${overview.rates.deliveryRate}%`}
               hint={`${overview.counters.delivered} of ${overview.counters.attempted} attempts`}
             />
@@ -130,7 +130,7 @@ export default function AnalyticsPage() {
               points={overview.timeline}
               unit="%"
               series={[
-                { key: 'deliveryRate', label: 'Delivery rate', color: '#16a34a' },
+                { key: 'deliveryRate', label: 'Accept rate (SMTP)', color: '#16a34a' },
                 { key: 'bounceRate', label: 'Bounce rate', color: '#dc2626' },
                 { key: 'replyRate', label: 'Reply rate', color: '#2563eb' },
               ]}

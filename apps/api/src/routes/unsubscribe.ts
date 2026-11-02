@@ -1,5 +1,7 @@
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import { prisma } from '@signalforge/database';
+import { buildIdempotencyKey, deliveryEventService } from '@signalforge/deliverability';
+import { sendingJobService } from '@signalforge/sending';
 import { verifyUnsubscribeToken } from '../unsubscribe-token.js';
 
 function page(title: string, body: string): string {
@@ -40,6 +42,40 @@ async function unsubscribe(token: string | undefined): Promise<{ ok: true } | { 
       update: { reason: 'UNSUBSCRIBED' },
     }),
   ]);
+
+  // Best-effort accounting, mirroring the reply-based unsubscribe path: stop the
+  // lead's active enrollments (cancels queued follow-ups) and record an
+  // UNSUBSCRIBE delivery event so header/footer one-click opt-outs are counted.
+  // Never let this fail the unsubscribe itself — the suppression above is what
+  // actually protects the recipient.
+  try {
+    const enrollments = await prisma.campaignLead.findMany({
+      where: {
+        leadId: lead.id,
+        campaign: { workspaceId: lead.workspaceId },
+        status: { notIn: ['UNSUBSCRIBED', 'BOUNCED', 'COMPLETED'] },
+      },
+      select: { id: true },
+    });
+    for (const enrollment of enrollments) {
+      await sendingJobService.stopCampaignLeadSequence({
+        campaignLeadId: enrollment.id,
+        workspaceId: lead.workspaceId,
+        stopReason: 'UNSUBSCRIBED',
+        campaignLeadStatus: 'UNSUBSCRIBED',
+      });
+    }
+    await deliveryEventService.recordEvent({
+      workspaceId: lead.workspaceId,
+      eventType: 'UNSUBSCRIBE',
+      idempotencyKey: buildIdempotencyKey(['unsubscribe', 'web', lead.id]),
+      leadId: lead.id,
+      campaignId: payload.campaignId || null,
+      source: 'SYSTEM',
+    });
+  } catch {
+    // Non-fatal: the recipient is already suppressed.
+  }
   return { ok: true };
 }
 

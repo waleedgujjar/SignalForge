@@ -295,4 +295,9 @@ export interface AnalyticsOverview {
 }
 
 export const OPEN_TRACKING_NOTE = 'Open tracking unavailable.';
+/// SMTP acceptance is not the same as inbox delivery. We record when a receiving
+/// server accepts a message, not whether it reached the inbox, so the metric is
+/// labelled "Accepted (SMTP)" rather than "Delivered".
+export const DELIVERY_CONFIRMATION_NOTE =
+  'Confirmed delivery is not measured. "Accepted (SMTP)" counts messages the receiving server accepted, which is not the same as inbox placement.';
 export const INSUFFICIENT_DATA_NOTE = 'Insufficient data';

@@ -82,7 +82,7 @@ export default function AnalyticsCampaignDetailPage() {
               hint={`${detail.summary?.enrolledLeads ?? 0} leads enrolled`}
             />
             <AnalyticsMetricCard
-              label="Delivery rate"
+              label="Accept rate (SMTP)"
               value={`${detail.summary?.rates.deliveryRate ?? 0}%`}
               hint={`${detail.summary?.counters.delivered ?? 0} delivered`}
             />
@@ -129,7 +129,7 @@ export default function AnalyticsCampaignDetailPage() {
                       <TableHead>Step</TableHead>
                       <TableHead>Subject</TableHead>
                       <TableHead>Sent</TableHead>
-                      <TableHead>Delivered</TableHead>
+                      <TableHead>Accepted (SMTP)</TableHead>
                       <TableHead>Replies</TableHead>
                       <TableHead>Reply rate</TableHead>
                       <TableHead>Unsubscribes</TableHead>

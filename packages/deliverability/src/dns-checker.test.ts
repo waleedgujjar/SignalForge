@@ -109,6 +109,40 @@ describe('checkDomainAuth', () => {
     expect(result.dkimSelectors).toHaveLength(0);
   });
 
+  it('reports DKIM FAIL when a probed selector has no record (NXDOMAIN)', async () => {
+    const result = await checkDomainAuth('example.com', {
+      dkimSelectors: ['hostingermail1'],
+      resolver: resolver({
+        resolveTxt: async (hostname) => {
+          if (hostname.includes('_domainkey')) {
+            const err = new Error('queryTxt ENOTFOUND hostingermail1._domainkey.example.com');
+            (err as { code?: string }).code = 'ENOTFOUND';
+            throw err;
+          }
+          return [['v=spf1 -all']];
+        },
+        resolveMx: async () => [{ exchange: 'mx.example.com', priority: 10 }],
+      }),
+    });
+    expect(result.dkimStatus).toBe('FAIL');
+    // A definitively-absent selector is not reported as an inconclusive error.
+    expect(result.lastError).toBeNull();
+  });
+
+  it('keeps DKIM UNKNOWN when the selector lookup is inconclusive (timeout)', async () => {
+    const result = await checkDomainAuth('example.com', {
+      dkimSelectors: ['s1'],
+      resolver: resolver({
+        resolveTxt: async (hostname) => {
+          if (hostname.includes('_domainkey')) throw new Error('queryTxt ETIMEOUT s1._domainkey.example.com');
+          return [['v=spf1 -all']];
+        },
+        resolveMx: async () => [{ exchange: 'mx.example.com', priority: 10 }],
+      }),
+    });
+    expect(result.dkimStatus).toBe('UNKNOWN');
+  });
+
   it('reports UNKNOWN rather than FAIL when a lookup errors', async () => {
     const result = await checkDomainAuth('example.com', {
       resolver: resolver({
