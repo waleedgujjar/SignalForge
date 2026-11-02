@@ -15,6 +15,8 @@ import { emailVerificationService } from '@signalforge/verification';
 import { publishWorkflowEvent } from '@signalforge/queue';
 
 import { logDiscoveryActivity } from './activity.js';
+import { categorizeLead } from './categorizer.js';
+import { organizeAsLocalBusiness } from './list-organizer.js';
 
 export interface PromotionResult {
   promoted: number;
@@ -83,13 +85,20 @@ export async function promoteDiscoveredLeads(input: {
       website: row.website,
     };
 
+    const category = categorizeLead({
+      category: row.industry,
+      name: row.company ?? row.fullName,
+      website: row.website,
+    }).category;
+
     const existing = await prisma.lead.findUnique({
       where: { workspaceId_email: { workspaceId: input.workspaceId, email } },
     });
 
     let leadId: string;
     if (existing) {
-      const update = fillGaps(existing as unknown as Record<string, unknown>, incoming);
+      // Fill the category too when the existing lead has none.
+      const update = fillGaps(existing as unknown as Record<string, unknown>, { ...incoming, category });
       if (Object.keys(update).length > 0) {
         await prisma.lead.update({ where: { id: existing.id }, data: update });
       }
@@ -101,6 +110,7 @@ export async function promoteDiscoveredLeads(input: {
           workspaceId: input.workspaceId,
           email,
           source: 'DISCOVERY',
+          category,
           ...Object.fromEntries(Object.entries(incoming).filter(([, v]) => v != null && v !== '')),
         } as Prisma.LeadUncheckedCreateInput,
       });
@@ -162,6 +172,9 @@ export async function promoteDiscoveredLeads(input: {
       metadata: { source: row.source, discoveryJobId: row.jobId },
     }).catch(() => {});
   }
+
+  // Keep promoted discovery leads organized with the other imported locals.
+  await organizeAsLocalBusiness(input.workspaceId, result.leadIds);
 
   if (result.promoted > 0) {
     await logDiscoveryActivity({

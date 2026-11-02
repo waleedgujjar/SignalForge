@@ -435,6 +435,7 @@ export interface Lead {
   companyDomain: string | null;
   jobTitle: string | null;
   industry: string | null;
+  category: string | null;
   phone: string | null;
   linkedinUrl: string | null;
   countryCode: string | null;
@@ -926,6 +927,20 @@ export async function bulkAddToList(leadIds: string[], listId: string): Promise<
 
 export async function bulkUpdateStatus(leadIds: string[], status: LeadStatus): Promise<{ updated: number }> {
   return apiFetch('/leads/bulk/status', { method: 'POST', body: JSON.stringify({ leadIds, status }) });
+}
+
+export async function bulkSetCategory(leadIds: string[], category: string): Promise<{ updated: number }> {
+  return apiFetch('/leads/bulk/category', { method: 'POST', body: JSON.stringify({ leadIds, category }) });
+}
+
+export interface LeadCategoryBucket {
+  category: string;
+  count: number;
+}
+
+/** The workspace's lead categories with counts (fixed local-business set first). */
+export async function fetchLeadCategories(): Promise<{ data: LeadCategoryBucket[] }> {
+  return apiFetch('/leads/categories');
 }
 
 const IMPORT_BATCH_SIZE = 500;

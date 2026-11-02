@@ -3,9 +3,35 @@
 // Each category lists keyword stems. Text from the lead's fields is matched on
 // word boundaries (so "band" does not match "broadband"), every category is
 // scored with per-field weights, and the best score wins only above a minimum.
-// Anything weaker is left Uncategorized rather than guessed.
+// Anything weaker is left in "Other" rather than guessed.
+//
+// The categories are the fixed local-business set below. Auto-categorization
+// only ever emits one of these labels (or "Other"); a user can still type any
+// category manually on a lead.
 
-export const UNCATEGORIZED = 'Uncategorized';
+/** The canonical local-business category set. "Other" is the fallback. */
+export const LOCAL_BUSINESS_CATEGORIES = [
+  'Restaurants',
+  'Healthcare',
+  'Real Estate',
+  'Salons & Beauty',
+  'Gyms & Fitness',
+  'Hotels',
+  'Home Services',
+  'Retail',
+  'Other',
+] as const;
+
+export type LocalBusinessCategory = (typeof LOCAL_BUSINESS_CATEGORIES)[number];
+
+/** Fallback category when nothing matches (also used for null/unknown). */
+export const OTHER = 'Other';
+
+/**
+ * @deprecated Historical name for the fallback category. Kept so existing
+ * imports keep compiling; its value is now "Other".
+ */
+export const UNCATEGORIZED = OTHER;
 
 export interface CategoryResult {
   category: string;
@@ -13,57 +39,37 @@ export interface CategoryResult {
   reason: string;
 }
 
-/**
- * Display order for categories: the user's priority list first, then all other
- * categories by size, Uncategorized last.
- */
+/** Display order for category buckets: the local-business list, "Other" last. */
 export const CATEGORY_DISPLAY_ORDER = [
+  'Restaurants',
   'Healthcare',
-  'Beauty',
-  'SaaS',
-  'Software',
-  'Technology',
-  'Marketing',
-  'Finance',
-  'E-commerce',
-  'Blogs',
+  'Real Estate',
+  'Salons & Beauty',
+  'Gyms & Fitness',
+  'Hotels',
+  'Home Services',
+  'Retail',
 ];
 
 interface Rule {
   category: string;
   /**
    * Lower-case stems; a trailing "*" matches any word continuation. A leading
-   * "~" marks a generic word (e.g. "store", "cloud") that counts half, so it
+   * "~" marks a generic word (e.g. "store", "coffee") that counts half, so it
    * cannot decide a category on its own.
    */
   keywords: string[];
 }
 
 export const CATEGORY_RULES: Rule[] = [
+  { category: 'Restaurants', keywords: ['restaurant*', 'cafe', 'café', 'coffee shop', '~coffee', 'bakery', 'bakeries', 'catering', 'caterer*', 'food truck', 'pizzeria', 'pizza', 'bistro', 'diner', 'bar & grill', '~grill', 'steakhouse', 'brewery', 'brewpub', 'winery', 'taqueria', 'taco*', 'bbq', 'barbecue', 'sushi', 'ramen', 'deli', '~eatery', 'ice cream', 'donut*', 'sandwich shop', 'juice bar'] },
   { category: 'Healthcare', keywords: ['healthcare', 'health care', 'medical', 'clinic*', 'hospital*', 'doctor*', 'physician*', 'dental', 'dentist*', 'orthodont*', 'dermatolog*', 'pediatric*', 'pharmac*', 'physiotherap*', 'chiropract*', 'therapist*', '~therapy', 'nurse*', 'nursing', 'optometr*', 'surgeon*', 'surgery', 'med spa', 'medspa', 'mental health', 'urgent care', 'telehealth', '~patient*'] },
-  { category: 'Beauty', keywords: ['beauty', 'salon*', 'makeup', 'make-up', 'make up artist', 'hairstyl*', 'hair stylist', 'hair studio', 'barber*', '~nail*', '~lash*', '~brow*', 'esthetic*', 'aesthetic*', 'skincare', 'skin care', '~cosmetic*', '~spa', 'day spa'] },
-  { category: 'SaaS', keywords: ['saas', 'software as a service', 'b2b software', 'subscription software', 'cloud platform', 'crm', 'erp', 'api platform', 'no-code', 'nocode'] },
-  { category: 'Software', keywords: ['software', 'software development', 'app develop*', 'web develop*', 'mobile app*', '~developer*', 'dev shop', 'devops', 'full stack', 'fullstack', '~programming'] },
-  { category: 'Technology', keywords: ['technology', 'tech company', 'it services', 'it support', 'managed services', 'cybersecurity', 'cyber security', 'artificial intelligence', '~ai', 'machine learning', 'data analytics', '~cloud', 'blockchain', 'web3', '~hardware', '~electronics'] },
-  { category: 'Marketing', keywords: ['marketing', 'digital marketing', 'seo', 'sem', 'ppc', 'advertis*', 'social media', 'growth agency', 'media agency', 'digital agency', 'branding agency', 'lead generation', 'copywrit*', 'pr agency', 'public relations', 'influencer marketing'] },
-  { category: 'Finance', keywords: ['finance', 'financial', 'accounting', 'accountant*', 'bookkeep*', 'cpa', '~tax*', 'insurance', 'mortgage*', '~loan*', '~bank*', 'banking', '~invest*', '~wealth', 'fintech', 'payroll', '~credit'] },
-  { category: 'E-commerce', keywords: ['e-commerce', 'ecommerce', 'online store', 'online shop', 'shopify', 'woocommerce', 'etsy', 'amazon seller', 'dropshipping', 'boutique', '~retail', 'clothing brand', 'apparel', 'shop now', '~store'] },
-  { category: 'Blogs', keywords: ['blog*', 'blogger*', 'newsletter', 'substack', 'magazine', '~publication', 'content creator', 'podcast*', 'vlog*', '~writer', 'journalist'] },
-  { category: 'Photography', keywords: ['photograph*', 'photo studio', 'photoshoot', 'fotograf*'] },
-  { category: 'Videography', keywords: ['videograph*', 'video production', 'filmmaker*', 'film maker', 'cinematograph*'] },
-  { category: 'Design', keywords: ['graphic design*', 'ui/ux', 'ux design*', 'ui design*', 'web design*', 'interior design*', '~designer*', 'design studio', '~branding'] },
-  { category: 'Consulting & Coaching', keywords: ['~consult*', '~coach*', '~mentor*', '~advisor*', 'advisory'] },
-  { category: 'Real Estate', keywords: ['real estate', 'realtor*', 'realty', 'property manag*', '~properties', 'brokerage', 'homes for sale'] },
-  { category: 'Food & Beverage', keywords: ['restaurant*', 'cafe', 'café', '~coffee', 'bakery', 'bakeries', 'catering', 'food truck', 'pizzeria', 'bar & grill', 'bistro', 'brewery', 'winery'] },
-  { category: 'Fitness & Wellness', keywords: ['fitness', 'gym', 'personal trainer*', 'yoga', 'pilates', 'crossfit', 'wellness', 'nutrition*', 'nutritionist*', 'meditation'] },
-  { category: 'Legal', keywords: ['law firm', 'attorney*', 'lawyer*', 'legal services', 'solicitor*', 'paralegal', 'notary'] },
-  { category: 'Construction & Home Services', keywords: ['construction', 'contractor*', 'plumb*', 'roofing', 'roofer*', 'hvac', 'electrician*', 'landscap*', 'cleaning service*', 'remodel*', 'renovation*', 'handyman', 'painting contractor'] },
-  { category: 'Automotive', keywords: ['automotive', 'car dealer*', 'auto repair', 'auto detail*', 'car wash', 'mechanic*', 'auto body', '~tire*'] },
-  { category: 'Education', keywords: ['~school*', '~academy', 'tutor*', 'education', 'university', 'learning center', 'online course*', 'edtech', 'training center'] },
-  { category: 'Travel & Hospitality', keywords: ['travel', 'hotel*', 'tour operator*', '~tours', 'hospitality', 'resort*', 'airbnb', 'vacation rental*', 'travel agency'] },
-  { category: 'Events & Entertainment', keywords: ['wedding*', 'event plann*', 'event venue', '~dj', '~entertainment', 'musician*', 'live music', '~band', 'comedian*', 'photo booth'] },
-  { category: 'Nonprofit', keywords: ['nonprofit', 'non-profit', 'charity', 'charities', '~foundation', 'ngo', '~volunteer*'] },
-  { category: 'Veterinary & Pets', keywords: ['veterinar*', 'vet clinic', 'pet groom*', 'dog groom*', 'pet store', 'pet shop', 'dog train*', 'animal hospital'] },
+  { category: 'Real Estate', keywords: ['real estate', 'realtor*', 'realty', 'property manag*', '~properties', 'brokerage', 'homes for sale', 'home builder*', 'title company'] },
+  { category: 'Salons & Beauty', keywords: ['beauty', 'salon*', 'hair salon', 'nail salon', 'makeup', 'make-up', 'make up artist', 'hairstyl*', 'hair stylist', 'hair studio', 'barber*', '~nail*', '~lash*', '~brow*', 'esthetic*', 'aesthetic*', 'skincare', 'skin care', '~cosmetic*', '~spa', 'day spa', 'waxing', 'tanning'] },
+  { category: 'Gyms & Fitness', keywords: ['fitness', 'gym*', 'personal trainer*', 'yoga', 'pilates', 'crossfit', '~wellness', 'nutrition*', 'nutritionist*', 'meditation', 'martial arts', 'karate', 'jiu jitsu', 'boxing gym', 'dance studio', 'spin studio', 'health club'] },
+  { category: 'Hotels', keywords: ['hotel*', 'motel*', 'resort*', '~inn', 'bed and breakfast', 'b&b', 'hostel', 'lodge', 'lodging', 'guest house', 'vacation rental*', '~suites', 'boutique hotel'] },
+  { category: 'Home Services', keywords: ['construction', 'contractor*', 'general contractor', 'plumb*', 'plumber*', 'roofing', 'roofer*', 'hvac', 'air conditioning', 'air conditioner*', 'heating', 'cooling', 'furnace', 'refrigeration', 'electrician*', 'electrical', 'landscap*', 'lawn care', 'lawn service', 'pest control', 'exterminator', 'garage door', 'appliance repair', 'pool service', 'pool cleaning', 'tree service', 'tree trimming', 'fencing', 'fence', 'flooring', 'paving', 'asphalt', 'septic', 'locksmith', 'moving', 'movers', 'pressure washing', 'power washing', 'gutter*', 'insulation', 'drywall', 'concrete', 'masonry', 'painting', 'painter*', 'remodel*', 'renovation*', 'handyman', 'cleaning service*', 'maid service', 'janitorial', 'junk removal', 'window cleaning', 'carpet cleaning', 'water damage', 'restoration', 'solar install*', 'home services'] },
+  { category: 'Retail', keywords: ['e-commerce', 'ecommerce', 'online store', 'online shop', 'shopify', 'woocommerce', 'etsy', 'amazon seller', 'dropshipping', 'boutique', '~retail', 'clothing brand', 'clothing store', 'apparel', '~store', '~shop', 'furniture store', 'jewelry', 'jeweler*', 'florist', 'flower shop', 'hardware store', 'grocer*', 'supermarket', 'gift shop', 'thrift store', '~market'] },
 ];
 
 const FIELD_WEIGHTS = {
@@ -111,17 +117,6 @@ function fieldText(field: CategorizedField, value: string): string {
   return value;
 }
 
-function titleCase(value: string): string {
-  return value
-    .trim()
-    .replace(/\s+/g, ' ')
-    .slice(0, 60)
-    .toLowerCase()
-    .split(' ')
-    .map((w) => (w ? w[0]!.toUpperCase() + w.slice(1) : w))
-    .join(' ');
-}
-
 export interface CategorizeInput {
   category?: string | null;
   keywords?: string | null;
@@ -134,24 +129,29 @@ export interface CategorizeInput {
 export function categorizeLead(input: CategorizeInput): CategoryResult {
   const provided = input.category?.trim();
   if (provided) {
-    // A file category that clearly names a known category is folded into it so
-    // "Dentist" and "Dental Clinic" group together; anything else is kept as
-    // its own dynamic category.
+    // A supplied category (e.g. a Google Maps business type like "HVAC
+    // contractor" or "Pizza restaurant") is folded into the matching local
+    // category. Anything that matches no category becomes "Other" — the
+    // taxonomy is fixed, and a user can override it by hand.
     const canonical = scoreCategories({ category: provided });
     if (canonical && canonical.score >= FIELD_WEIGHTS.category) {
       return {
         category: canonical.category,
         confidence: 1,
-        reason: `file category "${provided.slice(0, 60)}" matches ${canonical.category} (${canonical.matched.join(', ')})`,
+        reason: `category "${provided.slice(0, 60)}" matches ${canonical.category} (${canonical.matched.join(', ')})`,
       };
     }
-    return { category: titleCase(provided), confidence: 1, reason: 'category provided in file' };
+    return {
+      category: OTHER,
+      confidence: 0.3,
+      reason: `category "${provided.slice(0, 60)}" does not match a known category`,
+    };
   }
 
   const best = scoreCategories(input);
   if (!best || best.score < MIN_SCORE) {
     return {
-      category: UNCATEGORIZED,
+      category: OTHER,
       confidence: 0,
       reason: best ? `weak signal only (${best.matched.join(', ')})` : 'no category keywords in name, description, keywords or website',
     };
@@ -189,10 +189,10 @@ function scoreCategories(
   return best;
 }
 
-/** Sorts category buckets for display: priority list, then larger first, Uncategorized last. */
+/** Sorts category buckets for display: local-business order, then larger first, "Other" last. */
 export function sortCategoryBuckets<T extends { category: string; count: number }>(buckets: T[]): T[] {
   const rank = (c: string) => {
-    if (c === UNCATEGORIZED) return Number.MAX_SAFE_INTEGER;
+    if (c === OTHER) return Number.MAX_SAFE_INTEGER;
     const i = CATEGORY_DISPLAY_ORDER.indexOf(c);
     return i === -1 ? CATEGORY_DISPLAY_ORDER.length : i;
   };

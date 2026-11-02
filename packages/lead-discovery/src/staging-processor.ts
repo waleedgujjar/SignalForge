@@ -527,12 +527,20 @@ export function buildTransferRows(
     if (lead.bio) customFields.bio = lead.bio.slice(0, 1000);
     if (lead.category) customFields.sourceCategory = lead.category;
 
+    // Reuse the category already computed during staging; fall back to the
+    // shared categorizer so the transferred lead always has one.
+    const category =
+      lead.assignedCategory && lead.assignedCategory !== UNCATEGORIZED
+        ? lead.assignedCategory
+        : categorizeLead({ category: lead.category, name: lead.name, website: lead.website, bio: lead.bio }).category;
+
     processedRows.push({
       normalized,
       customFields,
       rowIndex: lead.sourceRow,
       hadEmail: true,
       nameSource: lead.name ? 'owner' : null,
+      category,
     });
     const ids = byEmail.get(lead.normalizedEmail) ?? [];
     ids.push(lead.id);

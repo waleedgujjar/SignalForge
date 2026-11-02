@@ -14,6 +14,8 @@ import {
 import { loadDedupCandidates } from './pipeline.js';
 import { createDedupIndex, findDuplicate, toDedupEntry, addToIndex } from './dedup.js';
 import { mapRow } from './adapters/file-adapter.js';
+import { categorizeLead } from './categorizer.js';
+import { organizeAsLocalBusiness } from './list-organizer.js';
 
 export interface ProcessedImportRow {
   normalized: NormalizedLead;
@@ -21,11 +23,30 @@ export interface ProcessedImportRow {
   rowIndex: number;
   hadEmail: boolean;
   nameSource: 'owner' | 'company' | null;
+  /** Local-business category assigned by the categorizer (always set; "Other" when unmatched). */
+  category?: string;
   linkedinUrl?: string;
   linkedinCompanyUrl?: string;
   region?: string;
   rawRow?: Record<string, string>;
   unmappedData?: Record<string, string>;
+}
+
+/**
+ * The lead's local-business category from its import fields. Reuses the shared
+ * categorizer; the mapped industry/business-type column is the strongest hint,
+ * then the company name and website.
+ */
+export function categoryForImport(
+  normalized: NormalizedLead,
+  customFields?: Record<string, string>,
+): string {
+  return categorizeLead({
+    category: normalized.industry,
+    name: normalized.company ?? normalized.fullName,
+    website: normalized.website,
+    bio: customFields?.bio,
+  }).category;
 }
 
 export interface ImportFieldStats {
@@ -175,6 +196,7 @@ export function processImportRows(
         rowIndex: i,
         hadEmail,
         nameSource,
+        category: categoryForImport(normalized, customFields),
         linkedinUrl,
         linkedinCompanyUrl,
         region,
@@ -286,6 +308,8 @@ export interface ExecuteImportOptions {
   sourceFile?: string;
   importBatchId?: string;
   researchEnabled?: boolean;
+  /** Add imported leads to the "Local Businesses" list (default true). */
+  organizeAsLocalBusiness?: boolean;
   onResearch?: (inputs: { leadId: string; companyUrl?: string; personUrl?: string }[]) => Promise<number>;
 }
 
@@ -293,6 +317,9 @@ export async function executeImportRows(
   options: ExecuteImportOptions,
 ): Promise<{ summary: ImportExecutionSummary; createdLeadIds: string[]; researchInputs: { leadId: string; companyUrl?: string; personUrl?: string }[] }> {
   const { workspaceId, processedRows, mergeStrategy, source, sourceFile, importBatchId, researchEnabled } = options;
+  // Every imported lead is organized into the Local Businesses list, both the
+  // ones we create and the ones that matched an existing lead.
+  const touchedLeadIds: string[] = [];
 
   const summary: ImportExecutionSummary = {
     created: 0,
@@ -330,6 +357,7 @@ export async function executeImportRows(
       };
 
       if (match) {
+        touchedLeadIds.push(match.id);
         if (mergeStrategy === 'skip') {
           summary.skipped++;
           if (researchEnabled && (linkedinCompanyUrl || linkedinUrl)) {
@@ -367,6 +395,7 @@ export async function executeImportRows(
             state: normalized.state,
             city: normalized.city,
             website: normalized.website,
+            category: processedRow.category ?? categoryForImport(normalized, customFields),
             source,
             customFields: Object.keys(mergedCustomFields).length > 0
               ? (mergedCustomFields as Prisma.InputJsonValue)
@@ -375,6 +404,7 @@ export async function executeImportRows(
         });
 
         createdLeadIds.push(created.id);
+        touchedLeadIds.push(created.id);
         summary.created++;
 
         const newEntry = toDedupEntry(normalized, created.id, source);
@@ -400,6 +430,10 @@ export async function executeImportRows(
         summary.errors++;
       }
     }
+  }
+
+  if (options.organizeAsLocalBusiness !== false) {
+    await organizeAsLocalBusiness(workspaceId, touchedLeadIds);
   }
 
   return { summary, createdLeadIds, researchInputs };
@@ -455,6 +489,7 @@ function buildLeadCreateManyData(
     state: normalized.state,
     city: normalized.city,
     website: normalized.website,
+    category: row.category ?? categoryForImport(normalized, row.customFields),
     source,
     customFields: customFields as Prisma.InputJsonValue,
   };
@@ -474,6 +509,8 @@ export async function persistLeadBatch(opts: {
   source: LeadSource;
   sourceFile?: string;
   importBatchId?: string;
+  /** Add the batch's leads to the "Local Businesses" list (default true). */
+  organizeAsLocalBusiness?: boolean;
 }): Promise<PersistBatchResult> {
   const { workspaceId, processedRows, mergeStrategy, source, sourceFile, importBatchId } = opts;
   const result: PersistBatchResult = { created: 0, updated: 0, skipped: 0, errors: 0 };
@@ -533,6 +570,15 @@ export async function persistLeadBatch(opts: {
     }
   } else {
     result.skipped += toExisting.length;
+  }
+
+  // Organize the whole batch (created + matched) into the Local Businesses list.
+  if (opts.organizeAsLocalBusiness !== false) {
+    const ids = await prisma.lead.findMany({
+      where: { workspaceId, email: { in: emails } },
+      select: { id: true },
+    });
+    await organizeAsLocalBusiness(workspaceId, ids.map((l) => l.id));
   }
 
   return result;

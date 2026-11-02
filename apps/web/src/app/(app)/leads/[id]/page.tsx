@@ -190,6 +190,7 @@ export default function LeadDetailPage() {
       phone: lead.phone ?? '',
       linkedinUrl: lead.linkedinUrl ?? '',
       industry: lead.industry ?? '',
+      category: lead.category ?? '',
       website: lead.website ?? '',
       companyDomain: lead.companyDomain ?? '',
       countryCode: lead.countryCode ?? '',
@@ -305,6 +306,14 @@ export default function LeadDetailPage() {
                     <Input value={form.industry ?? ''} onChange={(e) => setForm({ ...form, industry: e.target.value })} />
                   </div>
                   <div className="space-y-2">
+                    <Label>Category</Label>
+                    <Input
+                      value={form.category ?? ''}
+                      onChange={(e) => setForm({ ...form, category: e.target.value })}
+                      placeholder="e.g. Home Services"
+                    />
+                  </div>
+                  <div className="space-y-2">
                     <Label>Website</Label>
                     <Input value={form.website ?? ''} onChange={(e) => setForm({ ...form, website: e.target.value })} placeholder="https://example.com" />
                   </div>
@@ -376,6 +385,7 @@ export default function LeadDetailPage() {
                     <InfoRow icon={Globe2} label="Company domain" value={lead.companyDomain} />
                     <InfoRow icon={MapPin} label="Location" value={[lead.city, lead.state, lead.country].filter(Boolean).join(', ')} />
                     <InfoRow icon={Building2} label="Industry" value={lead.industry} />
+                    <InfoRow icon={Building2} label="Category" value={lead.category} />
                   </dl>
                   {(lead.source === 'CSV_IMPORT' || lead.source === 'GOOGLE_DRIVE') && (
                     <>
