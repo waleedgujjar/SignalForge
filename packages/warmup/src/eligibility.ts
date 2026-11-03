@@ -1,5 +1,6 @@
 import { prisma } from '@signalforge/database';
 import { computeUsageDate, isWithinWarmupWindow, toUsageDate } from './schedule-calculator.js';
+import { getDomainAuthHold } from './warmup-gate.js';
 import type { WarmupEligibilityResult, WarmupIneligibilityReason } from './types.js';
 
 const REASON_MESSAGES: Record<WarmupIneligibilityReason, string> = {
@@ -17,6 +18,7 @@ const REASON_MESSAGES: Record<WarmupIneligibilityReason, string> = {
   MAILBOX_UNVERIFIED: 'Mailbox has not been verified.',
   MAILBOX_NOT_FOUND: 'Mailbox not found in workspace.',
   MISSING_CREDENTIALS: 'Mailbox is missing SMTP credentials.',
+  DOMAIN_AUTH_FAILED: 'Sending domain authentication (SPF/DKIM) is failing.',
   NO_WARMUP_RECIPIENTS: 'No authorized warmup recipients are configured.',
   NO_ELIGIBLE_RECIPIENT: 'No eligible warmup recipient available right now.',
 };
@@ -63,6 +65,13 @@ export async function getWarmupEligibility(
   if (mailbox.healthStatus === 'UNHEALTHY') return ineligible('MAILBOX_UNHEALTHY');
   if (!mailbox.credential || !mailbox.smtpHost || !mailbox.smtpPort) {
     return ineligible('MISSING_CREDENTIALS');
+  }
+
+  // Never warm a domain whose authentication is broken — it just trains spam
+  // filters against it. UNKNOWN/unchecked does not block.
+  const authHold = await getDomainAuthHold(workspaceId, mailbox.emailAddress);
+  if (authHold.held) {
+    return ineligible('DOMAIN_AUTH_FAILED', { message: authHold.reason ?? REASON_MESSAGES.DOMAIN_AUTH_FAILED });
   }
 
   const config = mailbox.warmupConfig;

@@ -1,5 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Keep recipient verification deterministic and offline: real addresses here
+// verify VALID, and the obviously-fake one is INVALID.
+vi.mock('@signalforge/email', () => ({
+  verifyEmail: async (email: string) => ({
+    email,
+    status: email.includes('invalid') ? 'INVALID' : 'VERIFIED',
+    score: 0,
+    reason: '',
+    domain: email.split('@')[1] ?? '',
+    mxStatus: 'FOUND',
+  }),
+}));
+
 interface Row {
   id: string;
   workspaceId: string;
@@ -7,6 +20,8 @@ interface Row {
   name: string | null;
   enabled: boolean;
   consentConfirmed: boolean;
+  verificationStatus?: string | null;
+  verifiedAt?: Date | null;
   createdAt: Date;
 }
 
@@ -111,6 +126,29 @@ describe('WarmupRecipientService', () => {
         consentConfirmed: true,
       }),
     ).rejects.toBeInstanceOf(InvalidRecipientEmailError);
+  });
+
+  it('verifies on create: a valid address is enabled and marked VERIFIED', async () => {
+    const { warmupRecipientService } = await import('./recipient-service.js');
+    const r = await warmupRecipientService.create({
+      workspaceId: 'ws_1',
+      email: 'good@example.com',
+      consentConfirmed: true,
+    });
+    expect(r.verificationStatus).toBe('VERIFIED');
+    expect(r.enabled).toBe(true);
+    expect(r.verifiedAt).toBeInstanceOf(Date);
+  });
+
+  it('stores an INVALID address disabled so warmup never sends to it', async () => {
+    const { warmupRecipientService } = await import('./recipient-service.js');
+    const r = await warmupRecipientService.create({
+      workspaceId: 'ws_1',
+      email: 'invalid-box@example.com',
+      consentConfirmed: true,
+    });
+    expect(r.verificationStatus).toBe('INVALID');
+    expect(r.enabled).toBe(false);
   });
 
   it('rejects duplicate emails per workspace', async () => {

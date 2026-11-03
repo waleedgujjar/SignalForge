@@ -1093,6 +1093,9 @@ importers:
       '@signalforge/database':
         specifier: workspace:*
         version: link:../database
+      '@signalforge/email':
+        specifier: workspace:*
+        version: link:../email
       '@signalforge/mailboxes':
         specifier: workspace:*
         version: link:../mailboxes

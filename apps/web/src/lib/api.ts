@@ -2337,11 +2337,32 @@ export interface WarmupRecipient {
   name: string | null;
   enabled: boolean;
   consentConfirmed: boolean;
+  verificationStatus: string | null;
+  verifiedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
+export interface WarmupDomainAuth {
+  domain: string;
+  spfStatus: DnsCheckStatus;
+  dkimStatus: DnsCheckStatus;
+  dmarcStatus: DnsCheckStatus;
+  dmarcPolicy: string | null;
+  checkedAt: string;
+}
+
+export interface WarmupMailboxHealth {
+  mailboxId: string;
+  score: number;
+  protectionLevel: 'NORMAL' | 'WARNING' | 'AT_RISK' | 'CRITICAL';
+  protectionReason: string | null;
+  hardBounceCount: number;
+  softBounceCount: number;
+}
+
 export interface WarmupAccountSummary {
+  domain: string | null;
   mailbox: {
     id: string;
     emailAddress: string;
@@ -2353,7 +2374,11 @@ export interface WarmupAccountSummary {
     timezone: string | null;
   };
   config: WarmupConfigSummary | null;
+  auth: WarmupDomainAuth | null;
+  health: WarmupMailboxHealth | null;
   usage: {
+    /** SMTP-accepted today — not confirmed inbox delivery. */
+    acceptedToday: number;
     warmupSentToday: number;
     warmupReservedToday: number;
     campaignSentToday: number;
@@ -2485,6 +2510,10 @@ export async function updateWarmupRecipient(
 
 export async function deleteWarmupRecipient(id: string): Promise<void> {
   await apiFetch(`/warmup/recipients/${id}`, { method: 'DELETE' });
+}
+
+export async function verifyWarmupRecipient(id: string): Promise<WarmupRecipient> {
+  return apiFetch(`/warmup/recipients/${id}/verify`, { method: 'POST' });
 }
 
 export async function fetchWarmupAccounts(): Promise<WarmupAccountSummary[]> {
