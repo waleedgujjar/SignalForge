@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trash2, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Trash2, ShieldCheck, ShieldAlert, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { PageHeader } from '@/components/dashboard/page-header';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -20,7 +21,15 @@ import {
   deleteWarmupRecipient,
   fetchWarmupRecipients,
   updateWarmupRecipient,
+  verifyWarmupRecipient,
 } from '@/lib/api';
+
+function VerificationBadge({ status }: { status: string | null }) {
+  if (!status) return <Badge variant="secondary" className="font-normal">Unchecked</Badge>;
+  const variant =
+    status === 'VERIFIED' ? 'default' : status === 'INVALID' ? 'destructive' : 'secondary';
+  return <Badge variant={variant} className="font-normal">{status.toLowerCase()}</Badge>;
+}
 
 export default function WarmupRecipientsPage() {
   const queryClient = useQueryClient();
@@ -55,6 +64,16 @@ export default function WarmupRecipientsPage() {
     mutationFn: (input: { id: string; enabled: boolean }) =>
       updateWarmupRecipient(input.id, { enabled: input.enabled }),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['warmup', 'recipients'] });
+      queryClient.invalidateQueries({ queryKey: ['warmup', 'stats'] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const verifyMutation = useMutation({
+    mutationFn: (id: string) => verifyWarmupRecipient(id),
+    onSuccess: (r) => {
+      toast.success(`Verification: ${r.verificationStatus ?? 'unknown'}`);
       queryClient.invalidateQueries({ queryKey: ['warmup', 'recipients'] });
       queryClient.invalidateQueries({ queryKey: ['warmup', 'stats'] });
     },
@@ -161,8 +180,9 @@ export default function WarmupRecipientsPage() {
                   <TableRow>
                     <TableHead>Email</TableHead>
                     <TableHead>Name</TableHead>
+                    <TableHead>Verification</TableHead>
                     <TableHead>Enabled</TableHead>
-                    <TableHead className="w-16" />
+                    <TableHead className="w-24" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -170,6 +190,9 @@ export default function WarmupRecipientsPage() {
                     <TableRow key={r.id}>
                       <TableCell className="font-mono text-xs">{r.email}</TableCell>
                       <TableCell>{r.name ?? '—'}</TableCell>
+                      <TableCell>
+                        <VerificationBadge status={r.verificationStatus} />
+                      </TableCell>
                       <TableCell>
                         <Switch
                           checked={r.enabled}
@@ -179,14 +202,25 @@ export default function WarmupRecipientsPage() {
                         />
                       </TableCell>
                       <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => deleteMutation.mutate(r.id)}
-                          aria-label={`Remove ${r.email}`}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => verifyMutation.mutate(r.id)}
+                            disabled={verifyMutation.isPending}
+                            aria-label={`Re-verify ${r.email}`}
+                          >
+                            <RefreshCw className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => deleteMutation.mutate(r.id)}
+                            aria-label={`Remove ${r.email}`}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

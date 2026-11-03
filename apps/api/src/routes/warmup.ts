@@ -24,6 +24,11 @@ import {
 } from '@signalforge/validation';
 import { getWorkspaceId, requireWorkspaceGuard } from '../plugins/auth.js';
 
+function warmupDomainOf(email: string | null | undefined): string | null {
+  const at = (email ?? '').lastIndexOf('@');
+  return at === -1 ? null : email!.slice(at + 1).trim().toLowerCase() || null;
+}
+
 function handleError(error: unknown, reply: FastifyReply) {
   if (error instanceof MailboxNotInWorkspaceError) {
     return reply.status(404).send({ error: error.message });
@@ -159,11 +164,37 @@ export const warmupRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
+  app.post('/recipients/:id/verify', async (request, reply) => {
+    const workspaceId = getWorkspaceId(request);
+    const { id } = request.params as { id: string };
+    try {
+      return await warmupRecipientService.verify(workspaceId, id);
+    } catch (error) {
+      return handleError(error, reply);
+    }
+  });
+
   app.get('/accounts', async (request) => {
     const workspaceId = getWorkspaceId(request);
     const mailboxes = await warmupConfigService.listAccounts(workspaceId);
+    // Per-domain authentication + per-mailbox health, so the dashboard can group
+    // by domain and show why warmup is held (auth failure / reputation).
+    const domains = [...new Set(mailboxes.map((mb) => warmupDomainOf(mb.emailAddress)).filter(Boolean))] as string[];
+    const [domainRows, healthRows] = await Promise.all([
+      prisma.domainHealthCheck.findMany({
+        where: { workspaceId, domain: { in: domains } },
+        select: { domain: true, spfStatus: true, dkimStatus: true, dmarcStatus: true, dmarcPolicy: true, checkedAt: true },
+      }),
+      prisma.mailboxHealth.findMany({
+        where: { mailboxId: { in: mailboxes.map((m) => m.id) } },
+        select: { mailboxId: true, score: true, protectionLevel: true, protectionReason: true, hardBounceCount: true, softBounceCount: true },
+      }),
+    ]);
+    const authByDomain = new Map(domainRows.map((r) => [r.domain, r]));
+    const healthByMailbox = new Map(healthRows.map((r) => [r.mailboxId, r]));
     return Promise.all(
       mailboxes.map(async (mb) => {
+        const domain = warmupDomainOf(mb.emailAddress);
         const timezone = mb.timezone || mb.workspace?.timezone || 'UTC';
         const usageDate = computeUsageDate(new Date(), timezone);
         const usage = await prisma.mailboxDailyUsage.findUnique({
@@ -172,6 +203,7 @@ export const warmupRoutes: FastifyPluginAsync = async (app) => {
           },
         });
         return {
+          domain,
           mailbox: {
             id: mb.id,
             emailAddress: mb.emailAddress,
@@ -183,7 +215,13 @@ export const warmupRoutes: FastifyPluginAsync = async (app) => {
             timezone: mb.timezone,
           },
           config: mb.warmupConfig ? summarizeConfig(mb.warmupConfig) : null,
+          // SPF/DKIM/DMARC for the sending domain (null = not checked yet).
+          auth: domain ? authByDomain.get(domain) ?? null : null,
+          // Reputation health for the mailbox (null = no activity scored yet).
+          health: healthByMailbox.get(mb.id) ?? null,
           usage: {
+            // SMTP-accepted today — not confirmed inbox delivery.
+            acceptedToday: usage?.warmupSentCount ?? 0,
             warmupSentToday: usage?.warmupSentCount ?? 0,
             warmupReservedToday: usage?.warmupReservedCount ?? 0,
             campaignSentToday: usage?.sentCount ?? 0,

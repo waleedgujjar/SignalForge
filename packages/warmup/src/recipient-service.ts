@@ -1,4 +1,17 @@
 import { prisma, type WarmupRecipient } from '@signalforge/database';
+import { verifyEmail } from '@signalforge/email';
+
+/// Best-effort verification of a recipient address before it is used for warmup.
+/// Returns the verification status (or null if the check could not run) — an
+/// inconclusive result never blocks adding the recipient; only INVALID disables it.
+async function verifyRecipient(email: string): Promise<{ status: string | null; invalid: boolean }> {
+  try {
+    const result = await verifyEmail(email);
+    return { status: result.status, invalid: result.status === 'INVALID' };
+  } catch {
+    return { status: null, invalid: false };
+  }
+}
 
 export interface CreateWarmupRecipientInput {
   workspaceId: string;
@@ -63,13 +76,33 @@ export class WarmupRecipientService {
       where: { workspaceId_email: { workspaceId: input.workspaceId, email } },
     });
     if (existing) throw new RecipientAlreadyExistsError(email);
+    // Verify the address before use; a confirmed-invalid address is stored but
+    // disabled so warmup never sends to a dead mailbox.
+    const verification = await verifyRecipient(email);
     return prisma.warmupRecipient.create({
       data: {
         workspaceId: input.workspaceId,
         email,
         name: input.name?.trim() || null,
-        enabled: true,
+        enabled: !verification.invalid,
         consentConfirmed: true,
+        verificationStatus: verification.status,
+        verifiedAt: verification.status ? new Date() : null,
+      },
+    });
+  }
+
+  /// Re-run verification for a recipient (e.g. after an address is fixed).
+  async verify(workspaceId: string, id: string): Promise<WarmupRecipient> {
+    const existing = await prisma.warmupRecipient.findFirst({ where: { id, workspaceId } });
+    if (!existing) throw new RecipientNotFoundError(id);
+    const verification = await verifyRecipient(existing.email);
+    return prisma.warmupRecipient.update({
+      where: { id },
+      data: {
+        verificationStatus: verification.status,
+        verifiedAt: verification.status ? new Date() : existing.verifiedAt,
+        ...(verification.invalid ? { enabled: false } : {}),
       },
     });
   }

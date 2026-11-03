@@ -13,6 +13,7 @@ import { warmupJobService } from './job-service.js';
 import { warmupConfigService } from './config-service.js';
 import { defaultRecipientProvider, type WarmupRecipientProvider } from './recipient-provider.js';
 import { renderWarmupTemplate } from './templates.js';
+import { getDomainAuthHold, getReputationHold } from './warmup-gate.js';
 import { logWarmupEvent } from './activity.js';
 import { parseWeekdays } from './eligibility.js';
 import type { WarmupQueuePayload } from './types.js';
@@ -176,10 +177,18 @@ export class WarmupSchedulerService {
     let completed = 0;
 
     for (const config of configs) {
-      // Hold the ramp whenever the mailbox is anything but healthy — a DEGRADED
-      // or UNHEALTHY mailbox must not keep increasing its daily volume.
+      // Hold the ramp on any real deliverability signal: a DEGRADED/UNHEALTHY
+      // composite health, a reputation-protection state (AT_RISK/CRITICAL, which
+      // the engine derives from bounce/complaint rates), or failing domain auth.
+      const [authHold, reputationHold] = await Promise.all([
+        getDomainAuthHold(config.workspaceId, config.mailbox.emailAddress),
+        getReputationHold(config.mailboxId),
+      ]);
       const holdRamp =
-        config.mailbox.healthStatus === 'DEGRADED' || config.mailbox.healthStatus === 'UNHEALTHY';
+        config.mailbox.healthStatus === 'DEGRADED' ||
+        config.mailbox.healthStatus === 'UNHEALTHY' ||
+        authHold.held ||
+        reputationHold.held;
       const result = computeCurrentLimit({
         startingDailyLimit: config.startingDailyLimit,
         maximumDailyLimit: config.maximumDailyLimit,

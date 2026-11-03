@@ -1473,6 +1473,10 @@ model WarmupRecipient {
   name             String?
   enabled          Boolean  @default(true)
   consentConfirmed Boolean  @default(false)
+  // Result of verifying the recipient address before use (VERIFIED/INVALID/
+  // RISKY/UNKNOWN/…); null until first checked.
+  verificationStatus String?
+  verifiedAt         DateTime?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
