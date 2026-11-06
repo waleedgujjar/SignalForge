@@ -13,8 +13,10 @@ const DEFAULT_TIMEOUT_MS = 5000;
 
 /**
  * Selectors probed when the caller supplies none, so a domain's DKIM can be
- * detected without the operator knowing the exact selector. Covers Hostinger
- * (`hostingermail1/2/3`, published as CNAMEs that resolveTxt follows) plus the
+ * detected without the operator knowing the exact selector. Covers both of
+ * Hostinger's DKIM layouts — the older `hostingermail1/2/3` (published as direct
+ * TXT) and the newer `hostingermail-a/-b/-c` (published as CNAMEs to
+ * `hostingermail-*.dkim.mail.hostinger.com`, which resolveTxt follows) — plus the
  * common defaults used by Google Workspace and other providers. A selector that
  * resolves to no record counts toward a real FAIL; a lookup that times out stays
  * UNKNOWN (see the probe logic below).
@@ -23,6 +25,9 @@ export const DEFAULT_DKIM_SELECTORS = [
   'hostingermail1',
   'hostingermail2',
   'hostingermail3',
+  'hostingermail-a',
+  'hostingermail-b',
+  'hostingermail-c',
   'default',
   'google',
   'selector1',
