@@ -6,6 +6,7 @@ import {
   evaluateDmarcRecord,
   evaluateSpfRecord,
   normalizeDomain,
+  DEFAULT_DKIM_SELECTORS,
   type DnsResolverLike,
 } from './dns-checker.js';
 
@@ -107,6 +108,41 @@ describe('checkDomainAuth', () => {
 
     expect(result.dkimStatus).toBe('UNKNOWN');
     expect(result.dkimSelectors).toHaveLength(0);
+  });
+
+  it('includes both Hostinger DKIM layouts in the default selectors', () => {
+    // Older TXT-based layout.
+    expect(DEFAULT_DKIM_SELECTORS).toContain('hostingermail1');
+    // Newer CNAME-based layout (hostingermail-a/-b/-c -> *.dkim.mail.hostinger.com).
+    expect(DEFAULT_DKIM_SELECTORS).toContain('hostingermail-a');
+    expect(DEFAULT_DKIM_SELECTORS).toContain('hostingermail-b');
+    expect(DEFAULT_DKIM_SELECTORS).toContain('hostingermail-c');
+  });
+
+  it('passes DKIM via a CNAME-backed selector while older selectors are absent', async () => {
+    // Mirrors rankologic.com: resolveTxt follows the CNAME on hostingermail-a and
+    // returns the real key, while the legacy hostingermail1/2/3 names NXDOMAIN.
+    const result = await checkDomainAuth('rankologic.com', {
+      dkimSelectors: ['hostingermail1', 'hostingermail2', 'hostingermail3', 'hostingermail-a', 'hostingermail-b', 'hostingermail-c'],
+      resolver: resolver({
+        resolveTxt: async (hostname) => {
+          if (hostname === 'hostingermail-a._domainkey.rankologic.com') {
+            return [['v=DKIM1;k=rsa;p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8']];
+          }
+          if (hostname.includes('_domainkey')) {
+            const err = new Error(`queryTxt ENOTFOUND ${hostname}`);
+            (err as { code?: string }).code = 'ENOTFOUND';
+            throw err;
+          }
+          if (hostname === '_dmarc.rankologic.com') return [['v=DMARC1; p=none']];
+          return [['v=spf1 include:_spf.mail.hostinger.com ~all']];
+        },
+        resolveMx: async () => [{ exchange: 'mx1.hostinger.com', priority: 5 }],
+      }),
+    });
+    expect(result.dkimStatus).toBe('PASS');
+    expect(result.spfStatus).toBe('PASS');
+    expect(result.lastError).toBeNull();
   });
 
   it('reports DKIM FAIL when a probed selector has no record (NXDOMAIN)', async () => {
